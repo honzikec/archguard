@@ -1,0 +1,31 @@
+version: 1
+
+rules:
+  - id: AG-001
+    kind: import_boundary
+    severity: error
+    rationale: "Domain code must not depend on infrastructure."
+    conditions:
+      from_paths:
+        - "src/domain/**"
+      forbidden_paths:
+        - "src/infra/**"
+
+  - id: AG-002
+    kind: banned_package
+    severity: error
+    rationale: "Domain code must not depend on HTTP libraries."
+    conditions:
+      from_paths:
+        - "src/domain/**"
+      forbidden_packages:
+        - "axios"
+
+  - id: AG-003
+    kind: file_convention
+    severity: warning
+    rationale: "Service files must use .service.ts naming."
+    conditions:
+      path_patterns:
+        - "src/services/**"
+      filename_regex: ".*\\.service\\.ts$"
