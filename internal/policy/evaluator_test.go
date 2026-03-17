@@ -27,7 +27,7 @@ func TestEvaluate_LayeredApp(t *testing.T) {
 		{SourceFile: "src/domain/user.ts", RawImport: "lodash", IsPackageImport: true},
 	}
 
-	findings := policy.Evaluate(cfg, importsOk)
+	findings := policy.Evaluate(cfg, importsOk, nil)
 	if len(findings) > 0 {
 		t.Errorf("expected 0 findings, got %d", len(findings))
 	}
@@ -37,7 +37,7 @@ func TestEvaluate_LayeredApp(t *testing.T) {
 		{SourceFile: "src/domain/user.ts", RawImport: "../infra/db.ts", ResolvedPath: "src/infra/db.ts"},
 	}
 
-	findings = policy.Evaluate(cfg, importsViolate)
+	findings = policy.Evaluate(cfg, importsViolate, nil)
 	if len(findings) != 1 {
 		t.Errorf("expected 1 finding, got %d", len(findings))
 	}

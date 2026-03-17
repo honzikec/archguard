@@ -67,7 +67,7 @@ func runCheck(args []string) {
 		allImports = append(allImports, imports...)
 	}
 
-	findings := policy.Evaluate(cfg, allImports)
+	findings := policy.Evaluate(cfg, allImports, files)
 	if len(findings) > 0 {
 		switch format {
 		case "json":
