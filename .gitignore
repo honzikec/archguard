@@ -46,3 +46,4 @@ go.work.sum
 
 # ArchGuard specifics
 archguard.yaml
+archguard
