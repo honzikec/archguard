@@ -27,7 +27,7 @@ func Execute() {
 }
 
 func printHelp() {
-	fmt.Println("ArchGuard — Architectural Sentinel\n")
+	fmt.Printf("ArchGuard — Architectural Sentinel\n\n")
 	fmt.Println("Commands:")
 	fmt.Println("  check")
 	fmt.Println("  mine")

@@ -46,7 +46,7 @@ func runCheck(args []string) {
 	}
 
 	if debug {
-		fmt.Println("Detected imports:\n")
+		fmt.Printf("Detected imports:\n\n")
 	}
 
 	var allImports []model.ImportRef
