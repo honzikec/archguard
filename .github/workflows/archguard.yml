@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ "main" ]
 
+permissions:
+  contents: read
+  security-events: write
+
 jobs:
   archguard:
     name: Architecture Check
@@ -25,8 +29,8 @@ jobs:
         run: archguard check --config archguard.yaml --format sarif > archguard-results.sarif
 
       - name: Upload SARIF results
-        if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: archguard-results.sarif
           category: archguard
