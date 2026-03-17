@@ -6,11 +6,13 @@ import (
 
 	"github.com/honzikec/archguard/internal/config"
 	"github.com/honzikec/archguard/internal/fileset"
+	"github.com/honzikec/archguard/internal/model"
 	"github.com/honzikec/archguard/internal/parser"
+	"github.com/honzikec/archguard/internal/policy"
 )
 
 func runCheck(args []string) {
-	_, err := config.Load("archguard.yaml")
+	cfg, err := config.Load("archguard.yaml")
 	if err != nil {
 		fmt.Printf("%v\n", err)
 		os.Exit(1)
@@ -35,6 +37,7 @@ func runCheck(args []string) {
 		fmt.Println("Detected imports:\n")
 	}
 
+	var allImports []model.ImportRef
 	for _, file := range files {
 		imports, err := parser.ParseFile(file)
 		if err != nil {
@@ -47,9 +50,18 @@ func runCheck(args []string) {
 				fmt.Printf("%s -> %s\n", imp.SourceFile, imp.RawImport)
 			}
 		}
+		allImports = append(allImports, imports...)
+	}
+
+	findings := policy.Evaluate(cfg, allImports)
+	if len(findings) > 0 {
+		for _, f := range findings {
+			fmt.Printf("%s\n\n%s\nimports\n%s\n\n", f.Message, f.FilePath, f.RawImport)
+		}
+		os.Exit(1)
 	}
 
 	if !debug {
-		fmt.Println("check command not yet implemented")
+		fmt.Println("No architectural violations found.")
 	}
 }
