@@ -52,14 +52,44 @@ func runMine(args []string) {
 	}
 
 	g := graph.Build(allImports, files)
+
+	// Gather candidates from all three sources
 	candidates := miner.Propose(g)
-	
+	candidates = append(candidates, miner.ProposeCrossAppRules(g)...)
+	candidates = append(candidates, miner.ProposeFileConventions(files)...)
+
+	// Detect cycles (always shown regardless of format, as they are violations not candidates)
+	cycles := miner.DetectCycles(g)
+
 	switch format {
 	case "yaml":
+		if len(cycles) > 0 {
+			fmt.Println("# WARNING: Circular dependencies detected:")
+			for _, cycle := range cycles {
+				fmt.Printf("# CYCLE: %s\n", joinCycle(cycle.Chain))
+			}
+			fmt.Println()
+		}
 		miner.PrintCandidatesYAML(candidates)
-	case "text":
-		fallthrough
 	default:
+		if len(cycles) > 0 {
+			fmt.Fprintf(os.Stderr, "\n⚠ Circular dependencies detected:\n")
+			for _, cycle := range cycles {
+				fmt.Fprintf(os.Stderr, "  CYCLE: %s\n", joinCycle(cycle.Chain))
+			}
+			fmt.Fprintln(os.Stderr)
+		}
 		miner.PrintCandidates(candidates)
 	}
+}
+
+func joinCycle(chain []string) string {
+	result := ""
+	for i, s := range chain {
+		if i > 0 {
+			result += " → "
+		}
+		result += s
+	}
+	return result
 }
