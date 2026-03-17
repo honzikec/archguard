@@ -67,3 +67,26 @@ func PrintCandidates(candidates []Candidate) {
 		fmt.Printf("Violations: %d\n", c.Violations)
 	}
 }
+
+func PrintCandidatesYAML(candidates []Candidate) {
+	if len(candidates) == 0 {
+		return
+	}
+
+	fmt.Println("version: 1")
+	fmt.Println()
+	fmt.Println("rules:")
+
+	for i, c := range candidates {
+		fmt.Printf("  - id: MINED-%03d\n", i+1)
+		fmt.Printf("    kind: import_boundary\n")
+		fmt.Printf("    severity: warning\n")
+		fmt.Printf("    rationale: \"Mined invariant: %s should not import %s\"\n", c.FromPaths, c.ForbiddenPaths)
+		fmt.Printf("    conditions:\n")
+		fmt.Printf("      from_paths:\n")
+		fmt.Printf("        - \"%s\"\n", c.FromPaths)
+		fmt.Printf("      forbidden_paths:\n")
+		fmt.Printf("        - \"%s\"\n", c.ForbiddenPaths)
+		fmt.Println()
+	}
+}

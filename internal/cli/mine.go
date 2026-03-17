@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/honzikec/archguard/internal/fileset"
 	"github.com/honzikec/archguard/internal/graph"
@@ -13,10 +14,24 @@ import (
 )
 
 func runMine(args []string) {
+	format := "text"
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--format" && i+1 < len(args) {
+			format = args[i+1]
+			i++
+		} else if strings.HasPrefix(arg, "--format=") {
+			format = strings.TrimPrefix(arg, "--format=")
+		}
+	}
 	files, err := fileset.Discover(".")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error discovering files: %v\n", err)
 		os.Exit(1)
+	}
+
+	if format == "text" {
+		fmt.Fprintf(os.Stderr, "Scanning %d files\n", len(files))
 	}
 
 	var allImports []model.ImportRef
@@ -38,5 +53,13 @@ func runMine(args []string) {
 
 	g := graph.Build(allImports, files)
 	candidates := miner.Propose(g)
-	miner.PrintCandidates(candidates)
+	
+	switch format {
+	case "yaml":
+		miner.PrintCandidatesYAML(candidates)
+	case "text":
+		fallthrough
+	default:
+		miner.PrintCandidates(candidates)
+	}
 }
