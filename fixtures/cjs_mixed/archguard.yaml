@@ -1,0 +1,11 @@
+version: 1
+project:
+  roots: ["src"]
+  include: ["**/*.js", "**/*.cjs", "**/*.mjs"]
+  exclude: ["**/node_modules/**"]
+rules:
+  - id: AG-NO-INFRA-CJS
+    kind: no_import
+    severity: error
+    scope: ["src/domain/**"]
+    target: ["src/infra/**"]

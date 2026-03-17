@@ -1,94 +1,140 @@
 package cli
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/honzikec/archguard/internal/config"
 	"github.com/honzikec/archguard/internal/fileset"
+	"github.com/honzikec/archguard/internal/graph"
 	"github.com/honzikec/archguard/internal/model"
 	"github.com/honzikec/archguard/internal/parser"
+	"github.com/honzikec/archguard/internal/pathutil"
 	"github.com/honzikec/archguard/internal/policy"
 	"github.com/honzikec/archguard/internal/report"
 )
 
-func runCheck(args []string) {
-	cfg, err := config.Load("archguard.yaml")
+func runCheck(args []string) int {
+	fs := flag.NewFlagSet("check", flag.ContinueOnError)
+	setFlagSetOutput(fs)
+	common := bindCommonFlags(fs, commonFlags{configPath: "archguard.yaml", format: "text"})
+	changedOnly := fs.Bool("changed-only", false, "Analyze only changed files from git working tree")
+	severityThreshold := fs.String("severity-threshold", "error", "Blocking threshold: warning|error")
+	maxFindings := fs.Int("max-findings", 0, "Maximum findings to emit (0 = unlimited)")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	if common.format != "text" && common.format != "json" && common.format != "sarif" {
+		fmt.Fprintf(os.Stderr, "unsupported format: %s\n", common.format)
+		return 2
+	}
+	if *severityThreshold != "warning" && *severityThreshold != "error" {
+		fmt.Fprintf(os.Stderr, "unsupported severity threshold: %s\n", *severityThreshold)
+		return 2
+	}
+
+	started := time.Now()
+	cfg, err := config.Load(common.configPath)
 	if err != nil {
-		fmt.Printf("%v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		return 2
 	}
 
-	format := "text"
-	debug := false
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		if arg == "--debug" {
-			debug = true
-		}
-		if arg == "--format" && i+1 < len(args) {
-			format = args[i+1]
-			i++
-		} else if strings.HasPrefix(arg, "--format=") {
-			format = strings.TrimPrefix(arg, "--format=")
-		}
-	}
-
-	files, err := fileset.Discover(".")
+	files, err := fileset.Discover(cfg.Project)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error discovering files: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(os.Stderr, "failed to discover files: %v\n", err)
+		return 2
+	}
+	if *changedOnly {
+		files, err = filterChangedFiles(files)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			return 2
+		}
 	}
 
-	if format == "text" || debug {
-		fmt.Printf("Scanning %d files\n", len(files))
+	resolver, err := pathutil.NewResolver(".", cfg.Project)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to initialize resolver: %v\n", err)
+		return 2
 	}
 
-	if debug {
-		fmt.Printf("Detected imports:\n\n")
-	}
-
-	var allImports []model.ImportRef
+	allImports := make([]model.ImportRef, 0)
 	for _, file := range files {
 		imports, err := parser.ParseFile(file)
 		if err != nil {
-			if format == "text" || debug {
-				fmt.Fprintf(os.Stderr, "Error parsing %s: %v\n", file, err)
+			if common.debug {
+				fmt.Fprintf(os.Stderr, "parse error %s: %v\n", file, err)
 			}
 			continue
 		}
-
-		if debug {
-			for _, imp := range imports {
-				fmt.Printf("%s -> %s\n", imp.SourceFile, imp.RawImport)
+		for i := range imports {
+			resolved, isPackage := resolver.Resolve(imports[i].SourceFile, imports[i].RawImport)
+			imports[i].ResolvedPath = resolved
+			imports[i].IsPackageImport = isPackage
+			if common.debug {
+				fmt.Fprintf(os.Stderr, "%s -> %s (resolved=%s package=%t)\n", imports[i].SourceFile, imports[i].RawImport, imports[i].ResolvedPath, imports[i].IsPackageImport)
 			}
 		}
 		allImports = append(allImports, imports...)
 	}
 
-	findings := policy.Evaluate(cfg, allImports, files)
-	if len(findings) > 0 {
-		switch format {
-		case "json":
-			report.PrintJSON(findings)
-		case "sarif":
-			report.PrintSARIF(findings)
-		case "text":
-			fallthrough
-		default:
-			report.PrintText(findings)
-		}
-		os.Exit(1)
+	g := graph.Build(allImports, files)
+	findings, err := policy.Evaluate(cfg, allImports, files, g)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "policy evaluation failed: %v\n", err)
+		return 2
 	}
 
-	if !debug {
-		if format == "text" {
-			fmt.Println("No architectural violations found.")
-		} else if format == "json" {
-			fmt.Println("[]")
-		} else if format == "sarif" {
-			report.PrintSARIF(nil)
+	if *maxFindings > 0 && len(findings) > *maxFindings {
+		findings = findings[:*maxFindings]
+	}
+
+	summary := buildSummary(findings, len(files), len(allImports), int(time.Since(started).Milliseconds()))
+
+	switch common.format {
+	case "json":
+		report.PrintJSON(findings, summary)
+	case "sarif":
+		report.PrintSARIF(findings, summary)
+	default:
+		if !common.quiet {
+			fmt.Printf("Scanned %d files\n", len(files))
+		}
+		report.PrintText(findings, summary)
+	}
+
+	blocking := false
+	for _, f := range findings {
+		if severityMeetsThreshold(strings.ToLower(f.Severity), *severityThreshold) {
+			blocking = true
+			break
 		}
 	}
+	if blocking {
+		return 1
+	}
+	return 0
+}
+
+func buildSummary(findings []model.Finding, filesScanned, importsScanned, durationMS int) report.Summary {
+	summary := report.Summary{
+		FilesScanned:   filesScanned,
+		ImportsScanned: importsScanned,
+		FindingsTotal:  len(findings),
+		DurationMS:     durationMS,
+	}
+	for _, f := range findings {
+		switch f.Severity {
+		case "error":
+			summary.FindingsError++
+		case "warning":
+			summary.FindingsWarning++
+		}
+	}
+	return summary
 }

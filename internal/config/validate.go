@@ -1,6 +1,154 @@
 package config
 
+import (
+	"fmt"
+	"path/filepath"
+	"regexp"
+	"strings"
+)
+
 func Validate(cfg *Config) error {
-	// Simple validation for placeholder purposes to be expanded later
+	if cfg == nil {
+		return fmt.Errorf("config is nil")
+	}
+	if cfg.Version != 1 {
+		return fmt.Errorf("unsupported config version %d, expected 1", cfg.Version)
+	}
+
+	if err := validateProject(cfg.Project); err != nil {
+		return err
+	}
+
+	seen := map[string]struct{}{}
+	for i, rule := range cfg.Rules {
+		if rule.ID == "" {
+			return fmt.Errorf("rules[%d].id is required", i)
+		}
+		if _, ok := seen[rule.ID]; ok {
+			return fmt.Errorf("duplicate rule id: %s", rule.ID)
+		}
+		seen[rule.ID] = struct{}{}
+
+		if !isValidKind(rule.Kind) {
+			return fmt.Errorf("rule %s has unsupported kind %q", rule.ID, rule.Kind)
+		}
+		if !isValidSeverity(rule.Severity) {
+			return fmt.Errorf("rule %s has unsupported severity %q", rule.ID, rule.Severity)
+		}
+		if len(rule.Scope) == 0 {
+			return fmt.Errorf("rule %s must define scope", rule.ID)
+		}
+		for _, p := range rule.Scope {
+			if err := validateGlob(p); err != nil {
+				return fmt.Errorf("rule %s scope pattern %q invalid: %w", rule.ID, p, err)
+			}
+		}
+		for _, p := range rule.Except {
+			if err := validateGlob(p); err != nil {
+				return fmt.Errorf("rule %s except pattern %q invalid: %w", rule.ID, p, err)
+			}
+		}
+		if err := validateRuleByKind(rule); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func validateProject(project ProjectSettings) error {
+	for _, root := range project.Roots {
+		if strings.TrimSpace(root) == "" {
+			return fmt.Errorf("project.roots contains empty path")
+		}
+	}
+	for _, p := range project.Include {
+		if err := validateGlob(p); err != nil {
+			return fmt.Errorf("project.include pattern %q invalid: %w", p, err)
+		}
+	}
+	for _, p := range project.Exclude {
+		if err := validateGlob(p); err != nil {
+			return fmt.Errorf("project.exclude pattern %q invalid: %w", p, err)
+		}
+	}
+	for alias, targets := range project.Aliases {
+		if strings.TrimSpace(alias) == "" {
+			return fmt.Errorf("project.aliases contains empty alias key")
+		}
+		if len(targets) == 0 {
+			return fmt.Errorf("project.aliases[%s] must contain at least one target", alias)
+		}
+		for _, t := range targets {
+			if strings.TrimSpace(t) == "" {
+				return fmt.Errorf("project.aliases[%s] contains empty target", alias)
+			}
+		}
+	}
+	return nil
+}
+
+func validateRuleByKind(rule Rule) error {
+	switch rule.Kind {
+	case KindNoImport:
+		if len(rule.Target) == 0 {
+			return fmt.Errorf("rule %s kind no_import requires target patterns", rule.ID)
+		}
+		for _, p := range rule.Target {
+			if err := validateGlob(p); err != nil {
+				return fmt.Errorf("rule %s target pattern %q invalid: %w", rule.ID, p, err)
+			}
+		}
+	case KindNoPackage:
+		if len(rule.Target) == 0 {
+			return fmt.Errorf("rule %s kind no_package requires target packages", rule.ID)
+		}
+	case KindFilePattern:
+		if len(rule.Target) == 0 {
+			return fmt.Errorf("rule %s kind file_pattern requires regex target", rule.ID)
+		}
+		for _, pattern := range rule.Target {
+			if _, err := regexp.Compile(pattern); err != nil {
+				return fmt.Errorf("rule %s target regex %q invalid: %w", rule.ID, pattern, err)
+			}
+		}
+	case KindNoCycle:
+		if len(rule.Target) > 0 {
+			return fmt.Errorf("rule %s kind no_cycle does not support target", rule.ID)
+		}
+	default:
+		return fmt.Errorf("rule %s has unknown kind %q", rule.ID, rule.Kind)
+	}
+	return nil
+}
+
+func isValidKind(kind string) bool {
+	switch kind {
+	case KindNoImport, KindNoPackage, KindFilePattern, KindNoCycle:
+		return true
+	default:
+		return false
+	}
+}
+
+func isValidSeverity(severity string) bool {
+	switch severity {
+	case SeverityError, SeverityWarning:
+		return true
+	default:
+		return false
+	}
+}
+
+func validateGlob(pattern string) error {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" {
+		return fmt.Errorf("glob pattern cannot be empty")
+	}
+	// basic validation by stripping doublestar for filepath.Match compatibility
+	trial := strings.ReplaceAll(pattern, "**", "*")
+	if _, err := filepath.Match(trial, "x"); err != nil {
+		return err
+	}
 	return nil
 }

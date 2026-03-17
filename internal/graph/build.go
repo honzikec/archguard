@@ -1,70 +1,80 @@
 package graph
 
 import (
-	"path/filepath"
+	"path"
 
 	"github.com/honzikec/archguard/internal/model"
 )
 
 type Graph struct {
-	Nodes        map[string]int            // Subtree -> Count of files
-	Edges        map[string]map[string]int // Subtree A -> Subtree B -> Count of files in A importing B
-	PackageEdges map[string]map[string]int // Subtree -> External Package -> Count of files in Subtree importing Package
+	Nodes        map[string]int
+	Edges        map[string]map[string]int
+	PackageEdges map[string]map[string]int
+	FileEdges    map[string]map[string]struct{}
 }
 
 func Build(imports []model.ImportRef, allFiles []string) *Graph {
 	g := &Graph{
-		Nodes:        make(map[string]int),
-		Edges:        make(map[string]map[string]int),
-		PackageEdges: make(map[string]map[string]int),
+		Nodes:        map[string]int{},
+		Edges:        map[string]map[string]int{},
+		PackageEdges: map[string]map[string]int{},
+		FileEdges:    map[string]map[string]struct{}{},
 	}
 
-	// Count files per subtree
 	for _, file := range allFiles {
-		subtree := filepath.Dir(file)
+		subtree := path.Dir(file)
 		g.Nodes[subtree]++
+		if _, ok := g.FileEdges[file]; !ok {
+			g.FileEdges[file] = map[string]struct{}{}
+		}
 	}
 
-	// Track which files in A have already imported B or Package to avoid double counting
-	seenEdges := make(map[string]map[string]map[string]bool)
-	seenPackages := make(map[string]map[string]map[string]bool)
+	seenSubtree := map[string]map[string]map[string]struct{}{}
+	seenPackages := map[string]map[string]map[string]struct{}{}
 
 	for _, imp := range imports {
-		subtreeA := filepath.Dir(imp.SourceFile)
-
+		sourceSubtree := path.Dir(imp.SourceFile)
 		if imp.IsPackageImport {
-			pkg := imp.RawImport
-			if seenPackages[subtreeA] == nil {
-				seenPackages[subtreeA] = make(map[string]map[string]bool)
-				g.PackageEdges[subtreeA] = make(map[string]int)
+			if _, ok := g.PackageEdges[sourceSubtree]; !ok {
+				g.PackageEdges[sourceSubtree] = map[string]int{}
 			}
-			if seenPackages[subtreeA][pkg] == nil {
-				seenPackages[subtreeA][pkg] = make(map[string]bool)
+			if _, ok := seenPackages[sourceSubtree]; !ok {
+				seenPackages[sourceSubtree] = map[string]map[string]struct{}{}
 			}
-			if !seenPackages[subtreeA][pkg][imp.SourceFile] {
-				seenPackages[subtreeA][pkg][imp.SourceFile] = true
-				g.PackageEdges[subtreeA][pkg]++
+			if _, ok := seenPackages[sourceSubtree][imp.RawImport]; !ok {
+				seenPackages[sourceSubtree][imp.RawImport] = map[string]struct{}{}
+			}
+			if _, ok := seenPackages[sourceSubtree][imp.RawImport][imp.SourceFile]; !ok {
+				seenPackages[sourceSubtree][imp.RawImport][imp.SourceFile] = struct{}{}
+				g.PackageEdges[sourceSubtree][imp.RawImport]++
 			}
 			continue
 		}
 
-		subtreeB := filepath.Dir(imp.ResolvedPath)
-
-		if subtreeA == subtreeB {
-			continue // ignore internal module imports
+		if imp.ResolvedPath == "" {
+			continue
 		}
-
-		if seenEdges[subtreeA] == nil {
-			seenEdges[subtreeA] = make(map[string]map[string]bool)
-			g.Edges[subtreeA] = make(map[string]int)
+		if _, ok := g.FileEdges[imp.SourceFile]; !ok {
+			g.FileEdges[imp.SourceFile] = map[string]struct{}{}
 		}
-		if seenEdges[subtreeA][subtreeB] == nil {
-			seenEdges[subtreeA][subtreeB] = make(map[string]bool)
-		}
+		g.FileEdges[imp.SourceFile][imp.ResolvedPath] = struct{}{}
 
-		if !seenEdges[subtreeA][subtreeB][imp.SourceFile] {
-			seenEdges[subtreeA][subtreeB][imp.SourceFile] = true
-			g.Edges[subtreeA][subtreeB]++
+		targetSubtree := path.Dir(imp.ResolvedPath)
+		if sourceSubtree == targetSubtree {
+			continue
+		}
+		if _, ok := g.Edges[sourceSubtree]; !ok {
+			g.Edges[sourceSubtree] = map[string]int{}
+		}
+		if _, ok := seenSubtree[sourceSubtree]; !ok {
+			seenSubtree[sourceSubtree] = map[string]map[string]struct{}{}
+		}
+		if _, ok := seenSubtree[sourceSubtree][targetSubtree]; !ok {
+			seenSubtree[sourceSubtree][targetSubtree] = map[string]struct{}{}
+		}
+		if _, ok := seenSubtree[sourceSubtree][targetSubtree][imp.SourceFile]; !ok {
+			seenSubtree[sourceSubtree][targetSubtree][imp.SourceFile] = struct{}{}
+			g.Edges[sourceSubtree][targetSubtree]++
 		}
 	}
 

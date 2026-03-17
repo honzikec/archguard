@@ -1,22 +1,45 @@
 package config
 
 type Config struct {
-	Version int    `yaml:"version"`
-	Rules   []Rule `yaml:"rules"`
+	Version int             `yaml:"version"`
+	Project ProjectSettings `yaml:"project"`
+	Rules   []Rule          `yaml:"rules"`
+}
+
+type ProjectSettings struct {
+	Roots    []string            `yaml:"roots,omitempty"`
+	Include  []string            `yaml:"include,omitempty"`
+	Exclude  []string            `yaml:"exclude,omitempty"`
+	Tsconfig string              `yaml:"tsconfig,omitempty"`
+	Aliases  map[string][]string `yaml:"aliases,omitempty"`
 }
 
 type Rule struct {
-	ID         string     `yaml:"id"`
-	Kind       string     `yaml:"kind"`
-	Severity   string     `yaml:"severity"`
-	Rationale  string     `yaml:"rationale"`
-	Conditions Conditions `yaml:"conditions"`
+	ID       string   `yaml:"id"`
+	Kind     string   `yaml:"kind"`
+	Severity string   `yaml:"severity"`
+	Scope    []string `yaml:"scope"`
+	Target   []string `yaml:"target,omitempty"`
+	Except   []string `yaml:"except,omitempty"`
+	Message  string   `yaml:"message,omitempty"`
 }
 
-type Conditions struct {
-	FromPaths         []string `yaml:"from_paths,omitempty"`
-	ForbiddenPaths    []string `yaml:"forbidden_paths,omitempty"`
-	ForbiddenPackages []string `yaml:"forbidden_packages,omitempty"`
-	PathPatterns      []string `yaml:"path_patterns,omitempty"`
-	FilenameRegex     string   `yaml:"filename_regex,omitempty"`
+const (
+	KindNoImport    = "no_import"
+	KindNoPackage   = "no_package"
+	KindFilePattern = "file_pattern"
+	KindNoCycle     = "no_cycle"
+)
+
+const (
+	SeverityError   = "error"
+	SeverityWarning = "warning"
+)
+
+func DefaultProjectSettings() ProjectSettings {
+	return ProjectSettings{
+		Roots:   []string{"."},
+		Include: []string{"**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"},
+		Exclude: []string{"**/node_modules/**", "**/dist/**", "**/build/**", "**/.next/**", "**/coverage/**", "**/.git/**"},
+	}
 }

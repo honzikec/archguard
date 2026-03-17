@@ -1,10 +1,11 @@
 package cli
 
 import (
+	"flag"
 	"fmt"
 	"os"
-	"strings"
 
+	"github.com/honzikec/archguard/internal/config"
 	"github.com/honzikec/archguard/internal/fileset"
 	"github.com/honzikec/archguard/internal/graph"
 	"github.com/honzikec/archguard/internal/miner"
@@ -13,83 +14,85 @@ import (
 	"github.com/honzikec/archguard/internal/pathutil"
 )
 
-func runMine(args []string) {
-	format := "text"
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		if arg == "--format" && i+1 < len(args) {
-			format = args[i+1]
-			i++
-		} else if strings.HasPrefix(arg, "--format=") {
-			format = strings.TrimPrefix(arg, "--format=")
-		}
+func runMine(args []string) int {
+	fs := flag.NewFlagSet("mine", flag.ContinueOnError)
+	setFlagSetOutput(fs)
+	common := bindCommonFlags(fs, commonFlags{configPath: "archguard.yaml", format: "text"})
+	minSupport := fs.Int("min-support", 20, "Minimum files per scope to propose candidate")
+	maxPrevalence := fs.Float64("max-prevalence", 0.02, "Maximum prevalence to consider as invariant")
+	emitConfig := fs.Bool("emit-config", false, "Emit a starter config from mined candidates")
+	if err := fs.Parse(args); err != nil {
+		return 2
 	}
-	files, err := fileset.Discover(".")
+	if common.format != "text" && common.format != "yaml" && common.format != "json" {
+		fmt.Fprintf(os.Stderr, "unsupported format: %s\n", common.format)
+		return 2
+	}
+
+	cfg, err := loadConfigOptional(common.configPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error discovering files: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		return 2
 	}
 
-	if format == "text" {
-		fmt.Fprintf(os.Stderr, "Scanning %d files\n", len(files))
+	files, err := fileset.Discover(cfg.Project)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to discover files: %v\n", err)
+		return 2
+	}
+	resolver, err := pathutil.NewResolver(".", cfg.Project)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to initialize resolver: %v\n", err)
+		return 2
 	}
 
-	var allImports []model.ImportRef
+	imports := make([]model.ImportRef, 0)
 	for _, file := range files {
-		imports, err := parser.ParseFile(file)
+		parsed, err := parser.ParseFile(file)
 		if err != nil {
+			if common.debug {
+				fmt.Fprintf(os.Stderr, "parse error %s: %v\n", file, err)
+			}
 			continue
 		}
-		
-		// Resolve paths
-		for i := range imports {
-			if !imports[i].IsPackageImport {
-				imports[i].ResolvedPath = pathutil.ResolveImport(imports[i].SourceFile, imports[i].RawImport)
-			}
+		for i := range parsed {
+			resolved, isPackage := resolver.Resolve(parsed[i].SourceFile, parsed[i].RawImport)
+			parsed[i].ResolvedPath = resolved
+			parsed[i].IsPackageImport = isPackage
 		}
-
-		allImports = append(allImports, imports...)
+		imports = append(imports, parsed...)
 	}
 
-	g := graph.Build(allImports, files)
+	g := graph.Build(imports, files)
+	candidates := miner.Propose(g, files, miner.Options{MinSupport: *minSupport, MaxPrevalence: *maxPrevalence})
 
-	// Gather candidates from all three sources
-	candidates := miner.Propose(g)
-	candidates = append(candidates, miner.ProposeCrossAppRules(g)...)
-	candidates = append(candidates, miner.ProposeFileConventions(files)...)
+	if *emitConfig {
+		fmt.Print(miner.EmitStarterConfig(candidates))
+		return 0
+	}
 
-	// Detect cycles (always shown regardless of format, as they are violations not candidates)
-	cycles := miner.DetectCycles(g)
+	if len(candidates) == 0 && common.format == "text" {
+		fmt.Printf("No candidates discovered (min_support=%d, max_prevalence=%.4f).\n", *minSupport, *maxPrevalence)
+		return 0
+	}
 
-	switch format {
+	switch common.format {
 	case "yaml":
-		if len(cycles) > 0 {
-			fmt.Println("# WARNING: Circular dependencies detected:")
-			for _, cycle := range cycles {
-				fmt.Printf("# CYCLE: %s\n", joinCycle(cycle.Chain))
-			}
-			fmt.Println()
-		}
-		miner.PrintCandidatesYAML(candidates)
+		miner.PrintYAML(candidates)
+	case "json":
+		miner.PrintJSON(candidates)
 	default:
-		if len(cycles) > 0 {
-			fmt.Fprintf(os.Stderr, "\n⚠ Circular dependencies detected:\n")
-			for _, cycle := range cycles {
-				fmt.Fprintf(os.Stderr, "  CYCLE: %s\n", joinCycle(cycle.Chain))
-			}
-			fmt.Fprintln(os.Stderr)
-		}
-		miner.PrintCandidates(candidates)
+		miner.PrintText(candidates)
 	}
+	return 0
 }
 
-func joinCycle(chain []string) string {
-	result := ""
-	for i, s := range chain {
-		if i > 0 {
-			result += " → "
+func loadConfigOptional(path string) (*config.Config, error) {
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return &config.Config{Version: 1, Project: config.DefaultProjectSettings(), Rules: []config.Rule{}}, nil
 		}
-		result += s
+		return nil, err
 	}
-	return result
+	return config.Load(path)
 }

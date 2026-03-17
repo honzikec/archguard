@@ -1,0 +1,11 @@
+version: 1
+project:
+  roots: ["src"]
+  include: ["**/*.ts", "**/*.js"]
+  exclude: ["**/node_modules/**"]
+rules:
+  - id: AG-NO-INFRA
+    kind: no_import
+    severity: error
+    scope: ["src/domain/**"]
+    target: ["src/infra/**"]

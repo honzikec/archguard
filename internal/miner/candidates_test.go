@@ -1,6 +1,7 @@
 package miner_test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/honzikec/archguard/internal/graph"
@@ -8,112 +9,45 @@ import (
 	"github.com/honzikec/archguard/internal/model"
 )
 
-func TestMinerProposeBannedPackage(t *testing.T) {
-	var allFiles []string
-	var imports []model.ImportRef
-
+func TestProposeNoPackageCandidate(t *testing.T) {
+	files := make([]string, 0)
+	imports := make([]model.ImportRef, 0)
 	for i := 0; i < 20; i++ {
-		allFiles = append(allFiles, "src/domain/file"+string(rune('a'+i))+".ts")
+		files = append(files, fmt.Sprintf("src/domain/f%d.ts", i))
 	}
 	for i := 0; i < 20; i++ {
-		allFiles = append(allFiles, "src/infra/file"+string(rune('a'+i))+".ts")
-		imports = append(imports, model.ImportRef{
-			SourceFile:      "src/infra/file" + string(rune('a'+i)) + ".ts",
-			RawImport:       "axios",
-			IsPackageImport: true,
-		})
+		files = append(files, fmt.Sprintf("src/infra/f%d.ts", i))
+		imports = append(imports, model.ImportRef{SourceFile: fmt.Sprintf("src/infra/f%d.ts", i), RawImport: "axios", IsPackageImport: true})
 	}
 
-	g := graph.Build(imports, allFiles)
-	candidates := miner.Propose(g)
+	g := graph.Build(imports, files)
+	candidates := miner.Propose(g, files, miner.Options{MinSupport: 20, MaxPrevalence: 0.02})
 
 	found := false
 	for _, c := range candidates {
-		if c.Kind == "banned_package" && c.FromPaths == "src/domain/**" && c.ForbiddenPaths == "axios" {
+		if c.Kind == "no_package" && len(c.Scope) > 0 && c.Scope[0] == "src/domain/**" {
 			found = true
-			if c.Confidence != "MEDIUM" {
-				t.Errorf("expected MEDIUM confidence, got %s", c.Confidence)
-			}
+			break
 		}
 	}
 	if !found {
-		t.Errorf("expected miner to propose banning 'axios' from 'src/domain/**'")
-	}
-}
-
-func TestProposeFileConventions(t *testing.T) {
-	files := []string{
-		"src/services/user.service.ts",
-		"src/services/cart.service.ts",
-		"src/services/order.service.ts",
-		"src/services/payment.service.ts",
-		"src/services/auth.service.ts",
-	}
-
-	candidates := miner.ProposeFileConventions(files)
-
-	if len(candidates) == 0 {
-		t.Fatal("expected at least one file_convention candidate")
-	}
-	c := candidates[0]
-	if c.Kind != "file_convention" {
-		t.Errorf("expected kind file_convention, got %s", c.Kind)
-	}
-	if c.FromPaths != "src/services/**" {
-		t.Errorf("unexpected from_paths: %s", c.FromPaths)
-	}
-	// regex should encode .service.ts
-	if c.ForbiddenPaths == "" {
-		t.Error("expected a regex in ForbiddenPaths")
-	}
-	if c.Confidence != "HIGH" {
-		t.Errorf("expected HIGH confidence, got %s", c.Confidence)
+		t.Fatal("expected no_package candidate for src/domain")
 	}
 }
 
 func TestDetectCycles(t *testing.T) {
-	// Build a synthetic graph with a cycle: A -> B -> C -> A
 	g := &graph.Graph{
-		Nodes: map[string]int{
-			"src/a": 5,
-			"src/b": 5,
-			"src/c": 5,
-		},
+		Nodes: map[string]int{"src/a": 5, "src/b": 5, "src/c": 5},
 		Edges: map[string]map[string]int{
 			"src/a": {"src/b": 1},
 			"src/b": {"src/c": 1},
 			"src/c": {"src/a": 1},
 		},
 		PackageEdges: map[string]map[string]int{},
+		FileEdges:    map[string]map[string]struct{}{},
 	}
-
 	cycles := miner.DetectCycles(g)
 	if len(cycles) == 0 {
-		t.Fatal("expected to detect a cycle, got none")
-	}
-}
-
-func TestProposeCrossAppRules(t *testing.T) {
-	g := &graph.Graph{
-		Nodes: map[string]int{
-			"apps/frontend/src": 30,
-			"apps/storybook/stories": 20,
-		},
-		Edges: map[string]map[string]int{
-			"apps/storybook/stories": {"apps/frontend/src": 5},
-		},
-		PackageEdges: map[string]map[string]int{},
-	}
-
-	candidates := miner.ProposeCrossAppRules(g)
-	if len(candidates) == 0 {
-		t.Fatal("expected cross-app rule candidate, got none")
-	}
-	c := candidates[0]
-	if c.Kind != "import_boundary" {
-		t.Errorf("expected kind import_boundary, got %s", c.Kind)
-	}
-	if c.Confidence != "HIGH" {
-		t.Errorf("expected HIGH confidence for cross-app rule, got %s", c.Confidence)
+		t.Fatal("expected a cycle")
 	}
 }

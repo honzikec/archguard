@@ -1,270 +1,285 @@
 package miner
 
 import (
+	"encoding/json"
 	"fmt"
-	"path/filepath"
+	"path"
 	"regexp"
 	"sort"
 	"strings"
 
+	"github.com/honzikec/archguard/internal/config"
 	"github.com/honzikec/archguard/internal/graph"
 )
 
-type Candidate struct {
-	Kind           string
-	FromPaths      string
-	ForbiddenPaths string
-	Confidence     string
-	Support        int
-	Violations     int
+type Options struct {
+	MinSupport    int
+	MaxPrevalence float64
 }
 
-func Propose(g *graph.Graph) []Candidate {
-	var candidates []Candidate
+type Candidate struct {
+	Kind       string   `json:"kind" yaml:"kind"`
+	Scope      []string `json:"scope" yaml:"scope"`
+	Target     []string `json:"target,omitempty" yaml:"target,omitempty"`
+	Severity   string   `json:"severity" yaml:"severity"`
+	Support    int      `json:"support" yaml:"support"`
+	Violations int      `json:"violations" yaml:"violations"`
+	Prevalence float64  `json:"prevalence" yaml:"prevalence"`
+	Confidence string   `json:"confidence" yaml:"confidence"`
+	Evidence   string   `json:"evidence" yaml:"evidence"`
+}
 
-	// First collect all known packages across the graph
-	allPackages := make(map[string]bool)
-	for _, packages := range g.PackageEdges {
-		for pkg := range packages {
-			allPackages[pkg] = true
-		}
+func Propose(g *graph.Graph, allFiles []string, opts Options) []Candidate {
+	if opts.MinSupport <= 0 {
+		opts.MinSupport = 20
+	}
+	if opts.MaxPrevalence <= 0 {
+		opts.MaxPrevalence = 0.02
 	}
 
-	// Check all pairs of subtrees
-	for subtreeA, totalFiles := range g.Nodes {
-		for subtreeB := range g.Nodes {
-			if subtreeA == subtreeB {
-				continue
-			}
+	candidates := make([]Candidate, 0)
+	candidates = append(candidates, proposeNoImport(g, opts)...)
+	candidates = append(candidates, proposeNoPackage(g, opts)...)
+	candidates = append(candidates, proposeFilePattern(allFiles)...)
+	candidates = append(candidates, proposeNoCycle(g)...)
 
-			count := 0
-			if targets, ok := g.Edges[subtreeA]; ok {
-				count = targets[subtreeB]
-			}
-
-			prevalence := float64(count) / float64(totalFiles)
-
-			if prevalence <= 0.02 && totalFiles >= 20 {
-				confidence := "MEDIUM"
-				if prevalence <= 0.01 && totalFiles >= 50 {
-					confidence = "HIGH"
-				}
-
-				candidates = append(candidates, Candidate{
-					Kind:           "import_boundary",
-					FromPaths:      subtreeA + "/**",
-					ForbiddenPaths: subtreeB + "/**",
-					Confidence:     confidence,
-					Support:        totalFiles,
-					Violations:     count,
-				})
-			}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].Kind != candidates[j].Kind {
+			return candidates[i].Kind < candidates[j].Kind
 		}
-
-		// Check banned packages prevalence for this subtree
-		for pkg := range allPackages {
-			count := 0
-			if pkgs, ok := g.PackageEdges[subtreeA]; ok {
-				count = pkgs[pkg]
-			}
-
-			prevalence := float64(count) / float64(totalFiles)
-
-			if prevalence <= 0.02 && totalFiles >= 20 {
-				confidence := "MEDIUM"
-				if prevalence <= 0.01 && totalFiles >= 50 {
-					confidence = "HIGH"
-				}
-
-				candidates = append(candidates, Candidate{
-					Kind:           "banned_package",
-					FromPaths:      subtreeA + "/**",
-					ForbiddenPaths: pkg,
-					Confidence:     confidence,
-					Support:        totalFiles,
-					Violations:     count,
-				})
-			}
+		if len(candidates[i].Scope) == 0 || len(candidates[j].Scope) == 0 {
+			return len(candidates[i].Scope) < len(candidates[j].Scope)
 		}
-	}
-
+		return candidates[i].Scope[0] < candidates[j].Scope[0]
+	})
 	return candidates
 }
 
-// ProposeFileConventions infers file naming conventions from observed suffixes.
-// If ≥80% of files in a directory share a common double-extension (e.g. .service.ts),
-// it proposes a file_convention rule for that directory.
-func ProposeFileConventions(allFiles []string) []Candidate {
-	var candidates []Candidate
+func proposeNoImport(g *graph.Graph, opts Options) []Candidate {
+	candidates := make([]Candidate, 0)
+	for sourceSubtree, totalFiles := range g.Nodes {
+		if totalFiles < opts.MinSupport {
+			continue
+		}
+		for targetSubtree := range g.Nodes {
+			if sourceSubtree == targetSubtree {
+				continue
+			}
+			violations := 0
+			if edges, ok := g.Edges[sourceSubtree]; ok {
+				violations = edges[targetSubtree]
+			}
+			prevalence := float64(violations) / float64(totalFiles)
+			if prevalence > opts.MaxPrevalence {
+				continue
+			}
+			candidates = append(candidates, Candidate{
+				Kind:       config.KindNoImport,
+				Scope:      []string{sourceSubtree + "/**"},
+				Target:     []string{targetSubtree + "/**"},
+				Severity:   config.SeverityWarning,
+				Support:    totalFiles,
+				Violations: violations,
+				Prevalence: prevalence,
+				Confidence: confidence(prevalence, totalFiles),
+				Evidence:   fmt.Sprintf("%d/%d files in %s import %s", violations, totalFiles, sourceSubtree, targetSubtree),
+			})
+		}
+	}
+	return candidates
+}
 
-	// Group files by directory
-	byDir := make(map[string][]string)
+func proposeNoPackage(g *graph.Graph, opts Options) []Candidate {
+	candidates := make([]Candidate, 0)
+	allPackages := map[string]struct{}{}
+	for _, packages := range g.PackageEdges {
+		for pkg := range packages {
+			allPackages[pkg] = struct{}{}
+		}
+	}
+	for sourceSubtree, totalFiles := range g.Nodes {
+		if totalFiles < opts.MinSupport {
+			continue
+		}
+		for pkg := range allPackages {
+			violations := 0
+			if edges, ok := g.PackageEdges[sourceSubtree]; ok {
+				violations = edges[pkg]
+			}
+			prevalence := float64(violations) / float64(totalFiles)
+			if prevalence > opts.MaxPrevalence {
+				continue
+			}
+			candidates = append(candidates, Candidate{
+				Kind:       config.KindNoPackage,
+				Scope:      []string{sourceSubtree + "/**"},
+				Target:     []string{pkg},
+				Severity:   config.SeverityWarning,
+				Support:    totalFiles,
+				Violations: violations,
+				Prevalence: prevalence,
+				Confidence: confidence(prevalence, totalFiles),
+				Evidence:   fmt.Sprintf("%d/%d files in %s import %s", violations, totalFiles, sourceSubtree, pkg),
+			})
+		}
+	}
+	return candidates
+}
+
+func proposeFilePattern(allFiles []string) []Candidate {
+	byDir := map[string][]string{}
 	for _, f := range allFiles {
-		dir := filepath.Dir(f)
-		byDir[dir] = append(byDir[dir], filepath.Base(f))
+		dir := path.Dir(f)
+		byDir[dir] = append(byDir[dir], path.Base(f))
 	}
 
+	candidates := make([]Candidate, 0)
 	for dir, files := range byDir {
 		if len(files) < 5 {
 			continue
 		}
-
-		// Count double-extension suffixes (e.g. ".service.ts", ".controller.ts")
-		suffixCount := make(map[string]int)
-		for _, name := range files {
-			parts := strings.SplitN(name, ".", 2)
+		suffixCount := map[string]int{}
+		for _, file := range files {
+			parts := strings.SplitN(file, ".", 2)
 			if len(parts) == 2 {
-				suffix := "." + parts[1]
-				suffixCount[suffix]++
+				suffixCount["."+parts[1]]++
 			}
 		}
-
-		// Find dominant suffix
-		type suffixEntry struct {
-			suffix string
-			count  int
+		bestSuffix := ""
+		bestCount := 0
+		for suffix, c := range suffixCount {
+			if c > bestCount {
+				bestCount = c
+				bestSuffix = suffix
+			}
 		}
-		var entries []suffixEntry
-		for s, c := range suffixCount {
-			entries = append(entries, suffixEntry{s, c})
-		}
-		sort.Slice(entries, func(i, j int) bool {
-			return entries[i].count > entries[j].count
-		})
-
-		if len(entries) == 0 {
+		if bestCount == 0 {
 			continue
 		}
-
-		top := entries[0]
-		prevalence := float64(top.count) / float64(len(files))
-		if prevalence >= 0.80 {
-			// Build a regex from the suffix, e.g. ".service.ts" -> ".*\.service\.ts$"
-			escaped := regexp.QuoteMeta(top.suffix)
-			regexStr := ".*" + escaped + "$"
-			candidates = append(candidates, Candidate{
-				Kind:           "file_convention",
-				FromPaths:      dir + "/**",
-				ForbiddenPaths: regexStr, // repurposed field to carry the regex
-				Confidence:     "HIGH",
-				Support:        len(files),
-				Violations:     len(files) - top.count,
-			})
+		prevalence := float64(len(files)-bestCount) / float64(len(files))
+		if prevalence > 0.20 {
+			continue
 		}
+		regex := "^.*" + regexp.QuoteMeta(bestSuffix) + "$"
+		candidates = append(candidates, Candidate{
+			Kind:       config.KindFilePattern,
+			Scope:      []string{dir + "/**"},
+			Target:     []string{regex},
+			Severity:   config.SeverityWarning,
+			Support:    len(files),
+			Violations: len(files) - bestCount,
+			Prevalence: prevalence,
+			Confidence: "HIGH",
+			Evidence:   fmt.Sprintf("%d/%d files in %s match suffix %s", bestCount, len(files), dir, bestSuffix),
+		})
 	}
-
 	return candidates
 }
 
-// ProposeCrossAppRules detects when apps/* imports directly from another apps/* subtree.
-func ProposeCrossAppRules(g *graph.Graph) []Candidate {
-	var candidates []Candidate
-
-	for subtreeA, edges := range g.Edges {
-		partsA := strings.SplitN(subtreeA, "/", 3)
-		if len(partsA) < 2 || partsA[0] != "apps" {
+func proposeNoCycle(g *graph.Graph) []Candidate {
+	cycles := DetectCycles(g)
+	candidates := make([]Candidate, 0, len(cycles))
+	for _, c := range cycles {
+		if len(c.Chain) == 0 {
 			continue
 		}
-		appA := partsA[0] + "/" + partsA[1]
-
-		for subtreeB, count := range edges {
-			if count == 0 {
-				continue
-			}
-			partsB := strings.SplitN(subtreeB, "/", 3)
-			if len(partsB) < 2 || partsB[0] != "apps" {
-				continue
-			}
-			appB := partsB[0] + "/" + partsB[1]
-			if appA == appB {
-				continue // same app, fine
-			}
-
-			totalFiles := g.Nodes[subtreeA]
-			candidates = append(candidates, Candidate{
-				Kind:           "import_boundary",
-				FromPaths:      appA + "/**",
-				ForbiddenPaths: appB + "/**",
-				Confidence:     "HIGH",
-				Support:        totalFiles,
-				Violations:     count,
-			})
-		}
+		first := c.Chain[0]
+		candidates = append(candidates, Candidate{
+			Kind:       config.KindNoCycle,
+			Scope:      []string{first + "/**"},
+			Severity:   config.SeverityError,
+			Support:    len(c.Chain) - 1,
+			Violations: 1,
+			Prevalence: 1.0,
+			Confidence: "HIGH",
+			Evidence:   strings.Join(c.Chain, " -> "),
+		})
 	}
-
-	// Deduplicate by (FromPaths, ForbiddenPaths)
-	seen := make(map[string]bool)
-	var deduped []Candidate
-	for _, c := range candidates {
-		key := c.FromPaths + "→" + c.ForbiddenPaths
-		if !seen[key] {
-			seen[key] = true
-			deduped = append(deduped, c)
-		}
-	}
-	return deduped
+	return candidates
 }
 
-func PrintCandidates(candidates []Candidate) {
+func confidence(prevalence float64, support int) string {
+	if prevalence <= 0.01 && support >= 50 {
+		return "HIGH"
+	}
+	if prevalence <= 0.02 && support >= 20 {
+		return "MEDIUM"
+	}
+	return "LOW"
+}
+
+func PrintText(candidates []Candidate) {
 	if len(candidates) == 0 {
+		fmt.Println("No candidates discovered with current thresholds.")
 		return
 	}
-
 	for i, c := range candidates {
 		if i > 0 {
 			fmt.Println("---")
 		}
-		fmt.Printf("Candidate rule:\n\n")
-		switch c.Kind {
-		case "banned_package":
-			fmt.Printf("%s should not import package %s\n\n", c.FromPaths, c.ForbiddenPaths)
-		case "file_convention":
-			fmt.Printf("Files in %s should match pattern: %s\n\n", c.FromPaths, c.ForbiddenPaths)
-		default:
-			fmt.Printf("%s should not import %s\n\n", c.FromPaths, c.ForbiddenPaths)
+		fmt.Printf("kind: %s\n", c.Kind)
+		fmt.Printf("scope: %v\n", c.Scope)
+		if len(c.Target) > 0 {
+			fmt.Printf("target: %v\n", c.Target)
 		}
-		fmt.Printf("Confidence: %s\n", c.Confidence)
-		fmt.Printf("Support: %d files\n", c.Support)
-		fmt.Printf("Violations: %d\n", c.Violations)
+		fmt.Printf("severity: %s\n", c.Severity)
+		fmt.Printf("support: %d\n", c.Support)
+		fmt.Printf("violations: %d\n", c.Violations)
+		fmt.Printf("prevalence: %.4f\n", c.Prevalence)
+		fmt.Printf("confidence: %s\n", c.Confidence)
+		fmt.Printf("evidence: %s\n", c.Evidence)
 	}
 }
 
-func PrintCandidatesYAML(candidates []Candidate) {
-	if len(candidates) == 0 {
-		return
-	}
+func PrintJSON(candidates []Candidate) {
+	data, _ := json.MarshalIndent(candidates, "", "  ")
+	fmt.Println(string(data))
+}
 
+func PrintYAML(candidates []Candidate) {
 	fmt.Println("version: 1")
-	fmt.Println()
 	fmt.Println("rules:")
-
 	for i, c := range candidates {
 		fmt.Printf("  - id: MINED-%03d\n", i+1)
 		fmt.Printf("    kind: %s\n", c.Kind)
-		fmt.Printf("    severity: warning\n")
-
-		switch c.Kind {
-		case "banned_package":
-			fmt.Printf("    rationale: \"Mined invariant: %s should not import package %s\"\n", c.FromPaths, c.ForbiddenPaths)
-			fmt.Printf("    conditions:\n")
-			fmt.Printf("      from_paths:\n")
-			fmt.Printf("        - \"%s\"\n", c.FromPaths)
-			fmt.Printf("      forbidden_packages:\n")
-			fmt.Printf("        - \"%s\"\n", c.ForbiddenPaths)
-		case "file_convention":
-			fmt.Printf("    rationale: \"Mined convention: files in %s should match %s\"\n", c.FromPaths, c.ForbiddenPaths)
-			fmt.Printf("    conditions:\n")
-			fmt.Printf("      path_patterns:\n")
-			fmt.Printf("        - \"%s\"\n", c.FromPaths)
-			fmt.Printf("      filename_regex: \"%s\"\n", c.ForbiddenPaths)
-		default:
-			fmt.Printf("    rationale: \"Mined invariant: %s should not import %s\"\n", c.FromPaths, c.ForbiddenPaths)
-			fmt.Printf("    conditions:\n")
-			fmt.Printf("      from_paths:\n")
-			fmt.Printf("        - \"%s\"\n", c.FromPaths)
-			fmt.Printf("      forbidden_paths:\n")
-			fmt.Printf("        - \"%s\"\n", c.ForbiddenPaths)
+		fmt.Printf("    severity: %s\n", c.Severity)
+		fmt.Printf("    scope:\n")
+		for _, s := range c.Scope {
+			fmt.Printf("      - %q\n", s)
 		}
-		fmt.Println()
+		if len(c.Target) > 0 {
+			fmt.Printf("    target:\n")
+			for _, t := range c.Target {
+				fmt.Printf("      - %q\n", t)
+			}
+		}
+		fmt.Printf("    message: %q\n", c.Evidence)
 	}
+}
+
+func EmitStarterConfig(candidates []Candidate) string {
+	var b strings.Builder
+	b.WriteString("version: 1\n")
+	b.WriteString("project:\n")
+	b.WriteString("  roots: [\".\"]\n")
+	b.WriteString("  include: [\"**/*.ts\", \"**/*.tsx\", \"**/*.js\", \"**/*.jsx\", \"**/*.mjs\", \"**/*.cjs\"]\n")
+	b.WriteString("  exclude: [\"**/node_modules/**\", \"**/dist/**\", \"**/build/**\", \"**/.next/**\", \"**/coverage/**\", \"**/.git/**\"]\n")
+	b.WriteString("rules:\n")
+	for i, c := range candidates {
+		b.WriteString(fmt.Sprintf("  - id: MINED-%03d\n", i+1))
+		b.WriteString(fmt.Sprintf("    kind: %s\n", c.Kind))
+		b.WriteString(fmt.Sprintf("    severity: %s\n", c.Severity))
+		b.WriteString("    scope:\n")
+		for _, s := range c.Scope {
+			b.WriteString(fmt.Sprintf("      - %q\n", s))
+		}
+		if len(c.Target) > 0 {
+			b.WriteString("    target:\n")
+			for _, t := range c.Target {
+				b.WriteString(fmt.Sprintf("      - %q\n", t))
+			}
+		}
+		b.WriteString(fmt.Sprintf("    message: %q\n", c.Evidence))
+	}
+	return b.String()
 }

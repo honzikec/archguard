@@ -14,8 +14,9 @@ type SarifLog struct {
 }
 
 type SarifRun struct {
-	Tool    SarifTool     `json:"tool"`
-	Results []SarifResult `json:"results"`
+	Tool       SarifTool      `json:"tool"`
+	Results    []SarifResult  `json:"results"`
+	Properties map[string]any `json:"properties,omitempty"`
 }
 
 type SarifTool struct {
@@ -31,13 +32,15 @@ type SarifDriver struct {
 type SarifRule struct {
 	ID               string           `json:"id"`
 	ShortDescription SarifMessageText `json:"shortDescription"`
+	Help             SarifMessageText `json:"help"`
 }
 
 type SarifResult struct {
-	RuleID    string           `json:"ruleId"`
-	Level     string           `json:"level"`
-	Message   SarifMessageText `json:"message"`
-	Locations []SarifLocation  `json:"locations"`
+	RuleID              string            `json:"ruleId"`
+	Level               string            `json:"level"`
+	Message             SarifMessageText  `json:"message"`
+	Locations           []SarifLocation   `json:"locations"`
+	PartialFingerprints map[string]string `json:"partialFingerprints,omitempty"`
 }
 
 type SarifMessageText struct {
@@ -62,67 +65,64 @@ type SarifRegion struct {
 	StartColumn int `json:"startColumn"`
 }
 
-func PrintSARIF(findings []model.Finding) {
+func PrintSARIF(findings []model.Finding, summary Summary) {
 	run := SarifRun{
 		Tool: SarifTool{
 			Driver: SarifDriver{
 				Name:           "ArchGuard",
 				InformationURI: "https://github.com/honzikec/archguard",
-				Rules:          make([]SarifRule, 0),
+				Rules:          []SarifRule{},
 			},
 		},
-		Results: make([]SarifResult, 0),
+		Results: []SarifResult{},
+		Properties: map[string]any{
+			"summary": summary,
+		},
 	}
 
-	seenRules := make(map[string]bool)
-
+	seenRules := map[string]struct{}{}
 	for _, f := range findings {
-		if !seenRules[f.RuleID] {
+		if _, ok := seenRules[f.RuleID]; !ok {
 			run.Tool.Driver.Rules = append(run.Tool.Driver.Rules, SarifRule{
-				ID: f.RuleID,
-				ShortDescription: SarifMessageText{
-					Text: f.Message,
-				},
+				ID:               f.RuleID,
+				ShortDescription: SarifMessageText{Text: f.RuleKind},
+				Help:             SarifMessageText{Text: f.Message},
 			})
-			seenRules[f.RuleID] = true
+			seenRules[f.RuleID] = struct{}{}
 		}
 
 		level := "warning"
 		if f.Severity == "error" {
 			level = "error"
 		}
-
-		// Ensure proper default line numbers if empty
-		startLine := f.Line
-		if startLine == 0 {
-			startLine = 1
+		line := f.Line
+		if line <= 0 {
+			line = 1
 		}
-
-		run.Results = append(run.Results, SarifResult{
-			RuleID: f.RuleID,
-			Level:  level,
-			Message: SarifMessageText{
-				Text: f.Message + ": " + f.Rationale,
-			},
-			Locations: []SarifLocation{
-				{
-					PhysicalLocation: SarifPhysicalLocation{
-						ArtifactLocation: SarifArtifactLocation{
-							URI: f.FilePath,
-						},
-						Region: SarifRegion{
-							StartLine:   startLine,
-							StartColumn: f.Column,
-						},
-					},
+		col := f.Column
+		if col <= 0 {
+			col = 1
+		}
+		result := SarifResult{
+			RuleID:  f.RuleID,
+			Level:   level,
+			Message: SarifMessageText{Text: f.Message},
+			Locations: []SarifLocation{{
+				PhysicalLocation: SarifPhysicalLocation{
+					ArtifactLocation: SarifArtifactLocation{URI: f.FilePath},
+					Region:           SarifRegion{StartLine: line, StartColumn: col},
 				},
-			},
-		})
+			}},
+		}
+		if f.Fingerprint != "" {
+			result.PartialFingerprints = map[string]string{"primaryLocationLineHash": f.Fingerprint}
+		}
+		run.Results = append(run.Results, result)
 	}
 
 	log := SarifLog{
 		Version: "2.1.0",
-		Schema:  "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+		Schema:  "https://json.schemastore.org/sarif-2.1.0.json",
 		Runs:    []SarifRun{run},
 	}
 

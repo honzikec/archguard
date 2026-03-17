@@ -1,15 +1,219 @@
 package pathutil
 
 import (
+	"encoding/json"
+	"fmt"
+	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+
+	"github.com/honzikec/archguard/internal/config"
 )
 
-// ResolveImport attempts to resolve the absolute or project-relative path of an import statement.
-func ResolveImport(sourceFile, rawImport string) string {
-	if strings.HasPrefix(rawImport, ".") {
-		dir := filepath.Dir(sourceFile)
-		return filepath.Clean(filepath.Join(dir, rawImport))
+type Resolver struct {
+	root       string
+	baseURL    string
+	aliases    map[string][]string
+	aliasOrder []string
+	extensions []string
+}
+
+type tsConfigFile struct {
+	CompilerOptions struct {
+		BaseURL string              `json:"baseUrl"`
+		Paths   map[string][]string `json:"paths"`
+	} `json:"compilerOptions"`
+}
+
+func NewResolver(root string, project config.ProjectSettings) (*Resolver, error) {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve project root: %w", err)
 	}
-	return rawImport
+
+	r := &Resolver{
+		root:       absRoot,
+		aliases:    map[string][]string{},
+		extensions: []string{".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"},
+	}
+
+	tsconfigPath, err := detectTSConfig(absRoot, project.Tsconfig)
+	if err != nil {
+		return nil, err
+	}
+	if tsconfigPath != "" {
+		if err := r.loadTSConfig(tsconfigPath); err != nil {
+			return nil, err
+		}
+	}
+
+	for alias, targets := range project.Aliases {
+		r.aliases[Normalize(alias)] = append(r.aliases[Normalize(alias)], targets...)
+	}
+	r.aliasOrder = make([]string, 0, len(r.aliases))
+	for alias := range r.aliases {
+		r.aliasOrder = append(r.aliasOrder, alias)
+	}
+	sort.Slice(r.aliasOrder, func(i, j int) bool {
+		// Match more specific aliases first.
+		return len(r.aliasOrder[i]) > len(r.aliasOrder[j])
+	})
+
+	return r, nil
+}
+
+func detectTSConfig(root, explicit string) (string, error) {
+	if explicit != "" {
+		p := explicit
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(root, p)
+		}
+		if _, err := os.Stat(p); err != nil {
+			return "", fmt.Errorf("tsconfig not found: %s", p)
+		}
+		return p, nil
+	}
+	for _, name := range []string{"tsconfig.json", "jsconfig.json"} {
+		p := filepath.Join(root, name)
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
+	}
+	return "", nil
+}
+
+func (r *Resolver) loadTSConfig(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("failed to read %s: %w", path, err)
+	}
+	var cfg tsConfigFile
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return fmt.Errorf("failed to parse %s: %w", path, err)
+	}
+
+	base := cfg.CompilerOptions.BaseURL
+	if base == "" {
+		base = "."
+	}
+	if !filepath.IsAbs(base) {
+		base = filepath.Join(filepath.Dir(path), base)
+	}
+	r.baseURL = Normalize(base)
+
+	for alias, targets := range cfg.CompilerOptions.Paths {
+		normalizedAlias := Normalize(alias)
+		r.aliases[normalizedAlias] = append(r.aliases[normalizedAlias], targets...)
+	}
+	return nil
+}
+
+func (r *Resolver) Resolve(sourceFile, rawImport string) (string, bool) {
+	sourceFile = Normalize(sourceFile)
+	rawImport = strings.TrimSpace(rawImport)
+
+	if strings.HasPrefix(rawImport, ".") {
+		base := filepath.Join(r.root, filepath.Dir(sourceFile), rawImport)
+		if resolved, ok := r.probeLocal(base); ok {
+			return resolved, false
+		}
+		return "", true
+	}
+
+	if strings.HasPrefix(rawImport, "/") {
+		base := filepath.Join(r.root, rawImport)
+		if resolved, ok := r.probeLocal(base); ok {
+			return resolved, false
+		}
+		return "", true
+	}
+
+	for _, alias := range r.aliasOrder {
+		targets := r.aliases[alias]
+		if resolved, ok := r.resolveAlias(alias, targets, rawImport); ok {
+			return resolved, false
+		}
+	}
+
+	return "", true
+}
+
+func (r *Resolver) resolveAlias(alias string, targets []string, rawImport string) (string, bool) {
+	alias = Normalize(alias)
+	rawImport = Normalize(rawImport)
+
+	wildcard := strings.Contains(alias, "*")
+	if !wildcard {
+		if rawImport != alias {
+			return "", false
+		}
+		for _, target := range targets {
+			base := r.aliasTargetBase(target, "")
+			if resolved, ok := r.probeLocal(base); ok {
+				return resolved, true
+			}
+		}
+		return "", false
+	}
+
+	prefix := strings.Split(alias, "*")[0]
+	suffix := strings.Split(alias, "*")[1]
+	if !strings.HasPrefix(rawImport, prefix) || !strings.HasSuffix(rawImport, suffix) {
+		return "", false
+	}
+	middle := strings.TrimSuffix(strings.TrimPrefix(rawImport, prefix), suffix)
+
+	for _, target := range targets {
+		base := r.aliasTargetBase(target, middle)
+		if resolved, ok := r.probeLocal(base); ok {
+			return resolved, true
+		}
+	}
+
+	return "", false
+}
+
+func (r *Resolver) aliasTargetBase(target, middle string) string {
+	target = Normalize(target)
+	if strings.Contains(target, "*") {
+		target = strings.ReplaceAll(target, "*", middle)
+	} else if middle != "" {
+		target = filepath.Join(target, middle)
+	}
+
+	baseRoot := r.root
+	if r.baseURL != "" {
+		baseRoot = r.baseURL
+	}
+	if filepath.IsAbs(target) {
+		return target
+	}
+	return filepath.Join(baseRoot, target)
+}
+
+func (r *Resolver) probeLocal(base string) (string, bool) {
+	base = filepath.Clean(base)
+	candidates := []string{base}
+
+	ext := filepath.Ext(base)
+	if ext == "" {
+		for _, e := range r.extensions {
+			candidates = append(candidates, base+e)
+		}
+		for _, e := range r.extensions {
+			candidates = append(candidates, filepath.Join(base, "index"+e))
+		}
+	}
+
+	for _, candidate := range candidates {
+		if fi, err := os.Stat(candidate); err == nil && !fi.IsDir() {
+			rel, err := filepath.Rel(r.root, candidate)
+			if err != nil {
+				return Normalize(candidate), true
+			}
+			return Normalize(rel), true
+		}
+	}
+	return "", false
 }

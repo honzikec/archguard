@@ -1,7 +1,17 @@
 package policy
 
-const (
-	KindImportBoundary = "import_boundary"
-	KindBannedPackage  = "banned_package"
-	KindFileConvention = "file_convention"
-)
+import "github.com/honzikec/archguard/internal/config"
+
+type compiledRule struct {
+	Rule          config.Rule
+	TargetRegexes []compiledRegex
+}
+
+type compiledRegex struct {
+	Pattern string
+	Regexp  regexLike
+}
+
+type regexLike interface {
+	MatchString(string) bool
+}

@@ -1,0 +1,51 @@
+version: 1
+project:
+  roots:
+    - "."
+  include:
+    - "**/*.ts"
+    - "**/*.tsx"
+    - "**/*.js"
+    - "**/*.jsx"
+    - "**/*.mjs"
+    - "**/*.cjs"
+  exclude:
+    - "**/node_modules/**"
+    - "**/dist/**"
+    - "**/build/**"
+    - "**/.next/**"
+    - "**/coverage/**"
+    - "**/.git/**"
+  aliases:
+    "@/*":
+      - "src/*"
+rules:
+  - id: AG-NO-INFRA-IN-DOMAIN
+    kind: no_import
+    severity: error
+    scope:
+      - "src/domain/**"
+    target:
+      - "src/infra/**"
+
+  - id: AG-NO-AXIOS-IN-DOMAIN
+    kind: no_package
+    severity: warning
+    scope:
+      - "src/domain/**"
+    target:
+      - "axios"
+
+  - id: AG-SERVICE-NAMING
+    kind: file_pattern
+    severity: warning
+    scope:
+      - "src/services/**"
+    target:
+      - "^.*\\.service\\.(ts|js)$"
+
+  - id: AG-NO-SRC-CYCLES
+    kind: no_cycle
+    severity: error
+    scope:
+      - "src/**"

@@ -1,52 +1,104 @@
-# ArchGuard v1 — Architectural Sentinel for Agentic Coding
+# ArchGuard v0.2
 
-## Problem
-AI coding agents can generate code faster than humans can review it.
-But they often violate repository architecture.
-ArchGuard learns the architecture of your repo and blocks changes that break it.
+ArchGuard is a deterministic architecture policy checker for TypeScript/JavaScript projects.
 
-## Example Violation
-A common scenario is a domain layer importing from an infrastructure layer:
-`src/domain/user.ts` imports `src/infra/db.ts`
+It enforces architectural boundaries (imports, packages, file patterns, and cycles) with CI-friendly output formats (`text`, `json`, `sarif`).
 
-## Quick Install
+## What it enforces
+
+- `no_import`: block imports from scoped source paths to forbidden local paths
+- `no_package`: block package imports from scoped source paths
+- `file_pattern`: enforce filename regex rules in selected paths
+- `no_cycle`: detect subtree dependency cycles
+
+## Quickstart (5 minutes)
+
 ```bash
-go install github.com/honzikec/archguard/cmd/archguard@latest
+# Build locally
+GOCACHE=/tmp/go-build go build -o archguard ./cmd/archguard/main.go
+
+# Create starter config
+./archguard init
+
+# Run checks
+./archguard check --config archguard.yaml
 ```
 
-## Example Rule
+## CLI
+
+```bash
+archguard check   --config archguard.yaml --format text|json|sarif
+archguard mine    --config archguard.yaml --format text|yaml|json
+archguard explain --config archguard.yaml --rule RULE_ID
+archguard init    --config archguard.yaml
+archguard version
+```
+
+Default check behavior:
+- Blocking threshold: `error`
+- Exit codes: `0` pass, `1` blocking violations, `2` runtime/config/usage error
+
+## Example config
+
 ```yaml
+version: 1
+project:
+  roots: ["."]
+  include: ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"]
+  exclude: ["**/node_modules/**", "**/dist/**", "**/build/**", "**/.next/**", "**/coverage/**", "**/.git/**"]
+  aliases:
+    "@/*": ["src/*"]
+
 rules:
-  - id: AG-001
-    kind: import_boundary
+  - id: AG-NO-INFRA-IN-DOMAIN
+    kind: no_import
     severity: error
-    conditions:
-      from_paths: ["src/domain/**"]
-      forbidden_paths: ["src/infra/**"]
+    scope: ["src/domain/**"]
+    target: ["src/infra/**"]
+
+  - id: AG-NO-AXIOS-IN-DOMAIN
+    kind: no_package
+    severity: warning
+    scope: ["src/domain/**"]
+    target: ["axios"]
+
+  - id: AG-SERVICE-NAMING
+    kind: file_pattern
+    severity: warning
+    scope: ["src/services/**"]
+    target: ["^.*\\.service\\.(ts|js)$"]
+
+  - id: AG-NO-SRC-CYCLES
+    kind: no_cycle
+    severity: error
+    scope: ["src/**"]
 ```
 
-## Example Output
-```text
-AG-001 Import boundary violation
-src/domain/user.ts imports src/infra/db.ts
+## GitHub Actions
+
+```yaml
+- name: Install ArchGuard
+  run: go install github.com/honzikec/archguard/cmd/archguard@latest
+
+- name: Run ArchGuard
+  run: archguard check --config archguard.yaml --format sarif > archguard-results.sarif
+
+- name: Upload SARIF
+  if: always()
+  uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: archguard-results.sarif
+    category: archguard
 ```
 
-## How Agents Use It
-Agents can run `archguard check` before committing code to ensure structural integrity and automatically fix any architectural violations they introduce.
+## Docs
 
-## Used by AI agents
-Claude Code
-Cursor
-Google Antigravity
+- [Config](docs/config.md)
+- [Rules](docs/rules.md)
+- [CLI](docs/cli.md)
+- [GitHub CI](docs/ci-github.md)
+- [Troubleshooting](docs/troubleshooting.md)
 
-## Roadmap
-- [ ] CLI checks
-- [ ] CI integration (GitHub Actions)
-- [ ] Automated invariant mining
-- [ ] SARIF reporting
+## Contributing
 
-## Contribution Guide
-See `CONTRIBUTING.md` for details on how to run tests and submit PRs.
-
----
-Works with repositories up to 10k files in under 10 seconds.
+See `CONTRIBUTING.md`.

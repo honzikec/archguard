@@ -1,0 +1,10 @@
+version: 1
+project:
+  roots: ["src"]
+  include: ["**/*.ts"]
+  exclude: ["**/node_modules/**"]
+rules:
+  - id: AG-NO-CYCLES
+    kind: no_cycle
+    severity: error
+    scope: ["src/**"]

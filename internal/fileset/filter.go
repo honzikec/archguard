@@ -1,33 +1,31 @@
 package fileset
 
 import (
+	"path"
 	"strings"
+
+	"github.com/honzikec/archguard/internal/pathutil"
 )
 
-func shouldIgnoreDir(name string) bool {
-	// Ignore directories listed in PROJECT_PLAN.md
-	if name == "node_modules" ||
-		name == "dist" ||
-		name == "build" ||
-		name == ".next" ||
-		name == "coverage" {
+func shouldSkipDir(dirPath string, excludePatterns []string) bool {
+	base := path.Base(dirPath)
+	if strings.HasPrefix(base, ".") && base != "." {
 		return true
 	}
-	// Ignore directories starting with '.' unless it's '.' itself
-	if strings.HasPrefix(name, ".") && name != "." {
+	if pathutil.MatchAny(excludePatterns, dirPath) {
 		return true
 	}
 	return false
 }
 
 func isSupportedFile(path string) bool {
-	// Ignore generated files
 	if strings.Contains(path, ".gen.") {
 		return false
 	}
-	// Support specified extensions
-	return strings.HasSuffix(path, ".ts") ||
-		strings.HasSuffix(path, ".tsx") ||
-		strings.HasSuffix(path, ".js") ||
-		strings.HasSuffix(path, ".jsx")
+	for _, ext := range []string{".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"} {
+		if strings.HasSuffix(path, ext) {
+			return true
+		}
+	}
+	return false
 }

@@ -1,22 +1,59 @@
 package pathutil
 
 import (
-	"path/filepath"
+	"path"
+	"regexp"
 	"strings"
 )
 
-// MatchGlob checks if a given file path matches a simplistic glob pattern like "src/domain/**"
-func MatchGlob(pattern, path string) bool {
-	// Simple implementation for "/**" suffix
-	if strings.HasSuffix(pattern, "/**") {
-		prefix := strings.TrimSuffix(pattern, "/**")
-		return strings.HasPrefix(path, prefix)
-	}
+func MatchGlob(pattern, input string) bool {
+	pattern = Normalize(pattern)
+	input = Normalize(input)
 
-	// Fallback to filepath.Match
-	matched, err := filepath.Match(pattern, path)
+	re, err := regexp.Compile(globToRegex(pattern))
 	if err != nil {
 		return false
 	}
-	return matched
+	return re.MatchString(input)
+}
+
+func MatchAny(patterns []string, input string) bool {
+	for _, p := range patterns {
+		if MatchGlob(p, input) {
+			return true
+		}
+	}
+	return false
+}
+
+func globToRegex(pattern string) string {
+	pattern = path.Clean(pattern)
+	if pattern == "." {
+		pattern = "**"
+	}
+
+	var b strings.Builder
+	b.WriteString("^")
+	runes := []rune(pattern)
+	for i := 0; i < len(runes); i++ {
+		ch := runes[i]
+		switch ch {
+		case '*':
+			if i+1 < len(runes) && runes[i+1] == '*' {
+				b.WriteString(".*")
+				i++
+			} else {
+				b.WriteString("[^/]*")
+			}
+		case '?':
+			b.WriteString("[^/]")
+		case '.', '(', ')', '+', '|', '^', '$', '{', '}', '[', ']', '\\':
+			b.WriteString("\\")
+			b.WriteRune(ch)
+		default:
+			b.WriteRune(ch)
+		}
+	}
+	b.WriteString("$")
+	return b.String()
 }

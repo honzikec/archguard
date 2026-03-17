@@ -1,33 +1,31 @@
 # Contributing to ArchGuard
 
-First off, thanks for taking the time to contribute! Architecture matters, and we appreciate your help in making ArchGuard better.
+## Prerequisites
 
-## Development Setup
+- Go 1.21+
 
-1. Make sure you have Go 1.21 or later installed.
-2. Clone the repository.
-3. Run `go mod tidy` to download dependencies.
-
-## Building and Testing
-
-To build the CLI locally:
+## Build and test
 
 ```bash
-go build -o archguard ./cmd/archguard/main.go
+GOCACHE=/tmp/go-build go build -o archguard ./cmd/archguard/main.go
+GOCACHE=/tmp/go-build go test ./...
 ```
 
-To run the test suite:
+## Development notes
 
-```bash
-go test -v ./...
-```
+- Config schema is strict v1 (`version: 1`)
+- Output formats (`text`, `json`, `sarif`) should remain deterministic
+- Add tests for new parser/resolver/policy behavior
 
-Tests include fixtures found in the `fixtures/` directory to validate policy rule matching on various structures (layered architecture, monorepos, etc.).
+## Fixture expectations
 
-## Submitting Pull Requests
+When adding new fixture projects, include:
+- `archguard.yaml`
+- minimal source files reproducing the scenario
+- one clear expected behavior (pass/fail)
 
-1. Fork the repository and create your feature branch from `main`.
-2. If you've added new rule types or core logic, please add corresponding tests and optionally update the fixtures.
-3. Ensure the entire test suite passes (`go test ./...`).
-4. Ensure your code is formatted with standard Go tools (`go fmt ./...`).
-5. Create your Pull Request with a clear description of the problem and your solution.
+## Pull requests
+
+- Keep changes focused
+- Add/adjust tests for behavior changes
+- Update docs when CLI/config/rule behavior changes

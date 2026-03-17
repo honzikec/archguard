@@ -7,4 +7,5 @@ type ImportRef struct {
 	IsPackageImport bool
 	Line            int
 	Column          int
+	Kind            string
 }
