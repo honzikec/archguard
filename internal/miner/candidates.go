@@ -53,13 +53,6 @@ func Propose(g *graph.Graph) []Candidate {
 
 func PrintCandidates(candidates []Candidate) {
 	if len(candidates) == 0 {
-		// Output dummy candidate to match the README example if it's completely empty
-		// since the dummy repo in this prompt only has 3 files and would never trigger a real evaluation.
-		fmt.Printf("Candidate rule:\n\n")
-		fmt.Printf("%s should not import %s\n\n", "src/domain/**", "src/infra/**")
-		fmt.Printf("Confidence: %s\n", "HIGH")
-		fmt.Printf("Support: %d files\n", 137)
-		fmt.Printf("Violations: %d\n\n", 1)
 		return
 	}
 
