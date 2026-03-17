@@ -3,12 +3,14 @@ package cli
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/honzikec/archguard/internal/config"
 	"github.com/honzikec/archguard/internal/fileset"
 	"github.com/honzikec/archguard/internal/model"
 	"github.com/honzikec/archguard/internal/parser"
 	"github.com/honzikec/archguard/internal/policy"
+	"github.com/honzikec/archguard/internal/report"
 )
 
 func runCheck(args []string) {
@@ -18,19 +20,29 @@ func runCheck(args []string) {
 		os.Exit(1)
 	}
 
-	files, err := fileset.Discover(".")
-	if err != nil {
-		fmt.Printf("Error discovering files: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Printf("Scanning %d files\n", len(files))
-
+	format := "text"
 	debug := false
-	for _, arg := range args {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
 		if arg == "--debug" {
 			debug = true
-			break
 		}
+		if arg == "--format" && i+1 < len(args) {
+			format = args[i+1]
+			i++
+		} else if strings.HasPrefix(arg, "--format=") {
+			format = strings.TrimPrefix(arg, "--format=")
+		}
+	}
+
+	files, err := fileset.Discover(".")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error discovering files: %v\n", err)
+		os.Exit(1)
+	}
+
+	if format == "text" || debug {
+		fmt.Printf("Scanning %d files\n", len(files))
 	}
 
 	if debug {
@@ -41,7 +53,9 @@ func runCheck(args []string) {
 	for _, file := range files {
 		imports, err := parser.ParseFile(file)
 		if err != nil {
-			fmt.Printf("Error parsing %s: %v\n", file, err)
+			if format == "text" || debug {
+				fmt.Fprintf(os.Stderr, "Error parsing %s: %v\n", file, err)
+			}
 			continue
 		}
 
@@ -55,13 +69,26 @@ func runCheck(args []string) {
 
 	findings := policy.Evaluate(cfg, allImports)
 	if len(findings) > 0 {
-		for _, f := range findings {
-			fmt.Printf("%s\n\n%s\nimports\n%s\n\n", f.Message, f.FilePath, f.RawImport)
+		switch format {
+		case "json":
+			report.PrintJSON(findings)
+		case "sarif":
+			report.PrintSARIF(findings)
+		case "text":
+			fallthrough
+		default:
+			report.PrintText(findings)
 		}
 		os.Exit(1)
 	}
 
 	if !debug {
-		fmt.Println("No architectural violations found.")
+		if format == "text" {
+			fmt.Println("No architectural violations found.")
+		} else if format == "json" {
+			fmt.Println("[]")
+		} else if format == "sarif" {
+			report.PrintSARIF(nil)
+		}
 	}
 }
