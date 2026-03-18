@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/honzikec/archguard/internal/catalog"
 	"github.com/honzikec/archguard/internal/config"
 	"github.com/honzikec/archguard/internal/fileset"
 	"github.com/honzikec/archguard/internal/graph"
@@ -21,11 +22,35 @@ func runMine(args []string) int {
 	minSupport := fs.Int("min-support", 20, "Minimum files per scope to propose candidate")
 	maxPrevalence := fs.Float64("max-prevalence", 0.02, "Maximum prevalence to consider as invariant")
 	emitConfig := fs.Bool("emit-config", false, "Emit a starter config from mined candidates")
+	catalogMode := fs.String("catalog", "builtin", "Catalog mode: builtin|off")
+	catalogFormat := fs.String("catalog-format", "", "Catalog output format: text|json (default follows --format)")
+	adoptCatalog := fs.Bool("adopt-catalog", false, "Include adopted catalog rules when used with --emit-config")
+	adoptThreshold := fs.String("adopt-threshold", "high", "Catalog adoption threshold: high|medium")
+	showLowConfidence := fs.Bool("show-low-confidence", false, "Include low-confidence catalog matches")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if common.format != "text" && common.format != "yaml" && common.format != "json" {
 		fmt.Fprintf(os.Stderr, "unsupported format: %s\n", common.format)
+		return 2
+	}
+	if *catalogMode != "builtin" && *catalogMode != "off" {
+		fmt.Fprintf(os.Stderr, "unsupported catalog mode: %s\n", *catalogMode)
+		return 2
+	}
+	if *catalogFormat == "" {
+		if common.format == "json" {
+			*catalogFormat = "json"
+		} else {
+			*catalogFormat = "text"
+		}
+	}
+	if *catalogFormat != "text" && *catalogFormat != "json" {
+		fmt.Fprintf(os.Stderr, "unsupported catalog-format: %s\n", *catalogFormat)
+		return 2
+	}
+	if *adoptThreshold != "high" && *adoptThreshold != "medium" {
+		fmt.Fprintf(os.Stderr, "unsupported adopt-threshold: %s\n", *adoptThreshold)
 		return 2
 	}
 
@@ -65,13 +90,33 @@ func runMine(args []string) int {
 
 	g := graph.Build(imports, files)
 	candidates := miner.Propose(g, files, miner.Options{MinSupport: *minSupport, MaxPrevalence: *maxPrevalence})
+	catalogMatches := make([]miner.PatternMatch, 0)
+
+	if *catalogMode == "builtin" {
+		patterns, err := catalog.LoadBuiltin()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to load built-in catalog: %v\n", err)
+			return 2
+		}
+		catalogMatches, err = miner.MatchCatalog(patterns, candidates, files, miner.CatalogOptions{
+			ShowLowConfidence: *showLowConfidence,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to match catalog patterns: %v\n", err)
+			return 2
+		}
+	}
 
 	if *emitConfig {
-		fmt.Print(miner.EmitStarterConfig(candidates))
+		adopted := []config.Rule{}
+		if *adoptCatalog {
+			adopted = miner.AdoptCatalogMatches(catalogMatches, *adoptThreshold)
+		}
+		fmt.Print(miner.EmitStarterConfigWithCatalog(candidates, adopted))
 		return 0
 	}
 
-	if len(candidates) == 0 && common.format == "text" {
+	if len(candidates) == 0 && len(catalogMatches) == 0 && common.format == "text" {
 		fmt.Printf("No candidates discovered (min_support=%d, max_prevalence=%.4f).\n", *minSupport, *maxPrevalence)
 		return 0
 	}
@@ -80,9 +125,9 @@ func runMine(args []string) int {
 	case "yaml":
 		miner.PrintYAML(candidates)
 	case "json":
-		miner.PrintJSON(candidates)
+		miner.PrintMineJSON(candidates, catalogMatches)
 	default:
-		miner.PrintText(candidates)
+		miner.PrintMineText(candidates, catalogMatches, *catalogFormat)
 	}
 	return 0
 }

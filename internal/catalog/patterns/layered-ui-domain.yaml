@@ -1,0 +1,25 @@
+id: CAT-LAYERED-UI-DOMAIN
+name: "Layered: ui avoids domain internals"
+category: "layering"
+description: "UI layer should use application-facing APIs instead of importing domain internals directly."
+sources:
+  - title: "Hexagonal Architecture"
+    url: "https://alistair.cockburn.us/hexagonal-architecture/"
+    license: "Reference"
+detection:
+  required_facts:
+    - imports
+  heuristic:
+    type: prevalence_boundary
+    params:
+      source_globs: ["**/ui/**"]
+      target_globs: ["**/domain/**"]
+      max_prevalence: 0.02
+      min_support: 20
+rule_template:
+  kind: pattern
+  template: dependency_constraint
+  defaults:
+    severity: warning
+    params:
+      relation: imports

@@ -28,7 +28,7 @@ GOCACHE=/tmp/go-build go build -o archguard ./cmd/archguard/main.go
 
 ```bash
 archguard check   --config archguard.yaml --format text|json|sarif
-archguard mine    --config archguard.yaml --format text|yaml|json
+archguard mine    --config archguard.yaml --format text|yaml|json --catalog builtin
 archguard explain --config archguard.yaml --rule RULE_ID
 archguard init    --config archguard.yaml
 archguard version
@@ -85,7 +85,7 @@ rules:
 
 - name: Upload SARIF
   if: always()
-  uses: github/codeql-action/upload-sarif@v3
+  uses: github/codeql-action/upload-sarif@v4
   with:
     sarif_file: archguard-results.sarif
     category: archguard
@@ -96,6 +96,8 @@ rules:
 - [Config](docs/config.md)
 - [Rules](docs/rules.md)
 - [CLI](docs/cli.md)
+- [Pattern Catalog](docs/catalog.md)
+- [Catalog Sources](docs/catalog-sources.md)
 - [GitHub CI](docs/ci-github.md)
 - [Troubleshooting](docs/troubleshooting.md)
 

@@ -1,0 +1,25 @@
+id: CAT-LAYERED-DOMAIN-INFRA
+name: "Layered: domain avoids infra"
+category: "layering"
+description: "Domain layer should not depend directly on infrastructure layer."
+sources:
+  - title: "Clean Architecture"
+    url: "https://www.oreilly.com/library/view/clean-architecture-a/9780134494272/"
+    license: "Reference"
+detection:
+  required_facts:
+    - imports
+  heuristic:
+    type: prevalence_boundary
+    params:
+      source_globs: ["**/domain/**"]
+      target_globs: ["**/infra/**"]
+      max_prevalence: 0.02
+      min_support: 20
+rule_template:
+  kind: pattern
+  template: dependency_constraint
+  defaults:
+    severity: warning
+    params:
+      relation: imports

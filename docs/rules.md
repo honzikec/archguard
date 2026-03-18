@@ -16,6 +16,15 @@ For files in `scope`, filename must match at least one regex in `target`.
 
 Detects dependency cycles between scoped subtrees.
 
+## `pattern`
+
+Template-driven architectural rule (catalog-compatible).
+
+Supported templates:
+
+- `dependency_constraint`
+- `construction_policy`
+
 ## Exceptions
 
 `except` can suppress a rule when it matches source path and/or target path/import.

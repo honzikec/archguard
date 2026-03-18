@@ -55,3 +55,20 @@ func TestValidateRejectsInvalidRegex(t *testing.T) {
 		t.Fatal("expected regex validation error")
 	}
 }
+
+func TestValidatePatternRule(t *testing.T) {
+	cfg := &config.Config{Version: 1, Rules: []config.Rule{{
+		ID:       "AG-PATTERN",
+		Kind:     config.KindPattern,
+		Template: "dependency_constraint",
+		Severity: config.SeverityWarning,
+		Scope:    []string{"src/domain/**"},
+		Target:   []string{"src/infra/**"},
+		Params: map[string]string{
+			"relation": "imports",
+		},
+	}}}
+	if err := config.Validate(cfg); err != nil {
+		t.Fatalf("expected pattern rule to validate, got error: %v", err)
+	}
+}

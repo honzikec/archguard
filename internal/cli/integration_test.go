@@ -84,6 +84,60 @@ func TestSarifIncludesFingerprints(t *testing.T) {
 	}
 }
 
+func TestMineIncludesCatalogMatches(t *testing.T) {
+	code, out, errOut := runCmdInDir(t, fixturePath("broken_architecture"), []string{
+		"mine",
+		"--config", "archguard.yaml",
+		"--format", "json",
+		"--min-support", "1",
+		"--max-prevalence", "1",
+		"--show-low-confidence",
+	})
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%s", code, errOut)
+	}
+	if !strings.Contains(out, "\"catalog_matches\"") {
+		t.Fatalf("expected catalog_matches in mine json output, got: %s", out)
+	}
+}
+
+func TestMineDetectsConstructionCatalogPattern(t *testing.T) {
+	code, out, errOut := runCmdInDir(t, fixturePath("anti_pattern_direct_new"), []string{
+		"mine",
+		"--config", "archguard.yaml",
+		"--format", "json",
+		"--show-low-confidence",
+	})
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%s", code, errOut)
+	}
+	if !strings.Contains(out, "CAT-SERVICES-VIA-COMPOSITION-ROOT") {
+		t.Fatalf("expected construction catalog match, got: %s", out)
+	}
+}
+
+func TestMineEmitConfigAdoptsCatalog(t *testing.T) {
+	code, out, errOut := runCmdInDir(t, fixturePath("broken_architecture"), []string{
+		"mine",
+		"--config", "archguard.yaml",
+		"--emit-config",
+		"--adopt-catalog",
+		"--adopt-threshold", "medium",
+		"--min-support", "1",
+		"--max-prevalence", "1",
+		"--show-low-confidence",
+	})
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%s", code, errOut)
+	}
+	if !strings.Contains(out, "kind: pattern") {
+		t.Fatalf("expected adopted pattern rule in emitted config, got: %s", out)
+	}
+	if !strings.Contains(out, "derived_from_catalog") {
+		t.Fatalf("expected derived_from_catalog trace in emitted config")
+	}
+}
+
 func runCmdInDir(t *testing.T, dir string, args []string) (int, string, string) {
 	t.Helper()
 	cwd, _ := os.Getwd()

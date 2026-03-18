@@ -26,6 +26,15 @@ Flags:
 - `--min-support`
 - `--max-prevalence`
 - `--emit-config`
+- `--catalog` (`builtin|off`, default `builtin`)
+- `--catalog-format` (`text|json`)
+- `--show-low-confidence`
+- `--adopt-catalog` (used with `--emit-config`)
+- `--adopt-threshold` (`high|medium`, default `high`)
+
+Output notes:
+- JSON output includes `candidates[]` and `catalog_matches[]`
+- With `--emit-config --adopt-catalog`, adopted catalog rules are appended to emitted config
 
 ## `archguard explain`
 

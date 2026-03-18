@@ -4,7 +4,9 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"path"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -96,6 +98,14 @@ func Evaluate(cfg *config.Config, imports []model.ImportRef, files []string, g *
 				f.Details = chain
 				f.Message = defaultMessage(rule, "dependency cycle detected: "+chain)
 				appendFinding(&findings, seen, f)
+			}
+		case config.KindPattern:
+			patternFindings, err := evaluatePatternRule(rule, imports, files)
+			if err != nil {
+				return nil, err
+			}
+			for _, finding := range patternFindings {
+				appendFinding(&findings, seen, finding)
 			}
 		}
 	}
@@ -243,4 +253,152 @@ func canonicalCycle(cycle []string) string {
 		}
 	}
 	return best
+}
+
+func evaluatePatternRule(rule config.Rule, imports []model.ImportRef, files []string) ([]model.Finding, error) {
+	switch rule.Template {
+	case "dependency_constraint":
+		return evaluatePatternDependencyConstraint(rule, imports), nil
+	case "construction_policy":
+		return evaluatePatternConstructionPolicy(rule, files)
+	default:
+		return nil, fmt.Errorf("unsupported pattern template %q", rule.Template)
+	}
+}
+
+func evaluatePatternDependencyConstraint(rule config.Rule, imports []model.ImportRef) []model.Finding {
+	findings := make([]model.Finding, 0)
+	relation := "imports"
+	if rule.Params != nil && strings.TrimSpace(rule.Params["relation"]) != "" {
+		relation = rule.Params["relation"]
+	}
+
+	for _, imp := range imports {
+		if !matchesScope(rule.Scope, imp.SourceFile) {
+			continue
+		}
+		if relation == "packages" {
+			if !imp.IsPackageImport {
+				continue
+			}
+			if isExcepted(rule.Except, imp.SourceFile, imp.RawImport) {
+				continue
+			}
+			if !packageMatches(rule.Target, imp.RawImport) {
+				continue
+			}
+			f := baseFinding(rule, imp.SourceFile, imp.Line, imp.Column, imp.RawImport)
+			f.Message = defaultMessage(rule, fmt.Sprintf("%s imports package %s", imp.SourceFile, imp.RawImport))
+			findings = append(findings, f)
+			continue
+		}
+
+		// Default to import-path relation
+		if imp.IsPackageImport || imp.ResolvedPath == "" {
+			continue
+		}
+		if isExcepted(rule.Except, imp.SourceFile, imp.ResolvedPath) {
+			continue
+		}
+		if !pathutil.MatchAny(rule.Target, imp.ResolvedPath) {
+			continue
+		}
+		f := baseFinding(rule, imp.SourceFile, imp.Line, imp.Column, imp.RawImport)
+		f.Message = defaultMessage(rule, fmt.Sprintf("%s imports %s", imp.SourceFile, imp.ResolvedPath))
+		findings = append(findings, f)
+	}
+	return findings
+}
+
+func evaluatePatternConstructionPolicy(rule config.Rule, files []string) ([]model.Finding, error) {
+	serviceNames := collectServiceClassNames(files, rule.Target)
+	newExpr := regexp.MustCompile(`\bnew\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(`)
+	serviceNameRegex := regexp.MustCompile(`.*Service$`)
+	if rule.Params != nil && strings.TrimSpace(rule.Params["service_name_regex"]) != "" {
+		compiled, err := regexp.Compile(rule.Params["service_name_regex"])
+		if err != nil {
+			return nil, fmt.Errorf("invalid service_name_regex: %w", err)
+		}
+		serviceNameRegex = compiled
+	}
+
+	findings := make([]model.Finding, 0)
+	for _, file := range files {
+		if !matchesScope(rule.Scope, file) {
+			continue
+		}
+		if isExcepted(rule.Except, file, "") {
+			continue
+		}
+		content, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+		text := string(content)
+		idxs := newExpr.FindAllStringSubmatchIndex(text, -1)
+		for _, idx := range idxs {
+			if len(idx) < 4 {
+				continue
+			}
+			nameStart, nameEnd := idx[2], idx[3]
+			if nameStart < 0 || nameEnd <= nameStart {
+				continue
+			}
+			className := text[nameStart:nameEnd]
+			if len(serviceNames) > 0 {
+				if _, ok := serviceNames[className]; !ok {
+					continue
+				}
+			} else if !serviceNameRegex.MatchString(className) {
+				continue
+			}
+			line, col := lineCol(content, idx[0])
+			f := baseFinding(rule, file, line, col, className)
+			f.Message = defaultMessage(rule, fmt.Sprintf("direct construction of service %s outside composition root", className))
+			findings = append(findings, f)
+		}
+	}
+
+	return findings, nil
+}
+
+func collectServiceClassNames(files []string, serviceGlobs []string) map[string]struct{} {
+	serviceNames := map[string]struct{}{}
+	classDecl := regexp.MustCompile(`\bclass\s+([A-Za-z_$][A-Za-z0-9_$]*)\b`)
+	for _, file := range files {
+		if !pathutil.MatchAny(serviceGlobs, file) {
+			continue
+		}
+		content, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+		text := string(content)
+		idxs := classDecl.FindAllStringSubmatchIndex(text, -1)
+		for _, idx := range idxs {
+			if len(idx) < 4 {
+				continue
+			}
+			nameStart, nameEnd := idx[2], idx[3]
+			if nameStart < 0 || nameEnd <= nameStart {
+				continue
+			}
+			serviceNames[text[nameStart:nameEnd]] = struct{}{}
+		}
+	}
+	return serviceNames
+}
+
+func lineCol(content []byte, index int) (int, int) {
+	line := 1
+	col := 1
+	for i := 0; i < len(content) && i < index; i++ {
+		if content[i] == '\n' {
+			line++
+			col = 1
+		} else {
+			col++
+		}
+	}
+	return line, col
 }

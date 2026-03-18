@@ -1,0 +1,27 @@
+id: CAT-SERVICES-VIA-COMPOSITION-ROOT
+name: "Services are constructed in composition roots"
+category: "construction"
+description: "Service classes should be instantiated in composition root/bootstrap files rather than across application code."
+sources:
+  - title: "Dependency Injection Principles, Practices, and Patterns"
+    url: "https://www.manning.com/books/dependency-injection-principles-practices-patterns"
+    license: "Reference"
+detection:
+  required_facts:
+    - ast
+  heuristic:
+    type: construction_new_outside_root
+    params:
+      scope_globs: ["src/**"]
+      service_globs: ["src/services/**"]
+      allowed_new_globs: ["src/bootstrap/**", "src/di/**", "src/main/**"]
+      service_name_regex: ".*Service$"
+      max_prevalence: 0.02
+      min_support: 20
+rule_template:
+  kind: pattern
+  template: construction_policy
+  defaults:
+    severity: warning
+    params:
+      service_name_regex: ".*Service$"

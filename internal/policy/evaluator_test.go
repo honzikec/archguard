@@ -1,6 +1,8 @@
 package policy_test
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/honzikec/archguard/internal/config"
@@ -123,5 +125,87 @@ func TestEvaluate_NoCycle(t *testing.T) {
 	}
 	if len(findings) == 0 {
 		t.Fatal("expected at least one cycle finding")
+	}
+}
+
+func TestEvaluate_PatternDependencyConstraint(t *testing.T) {
+	cfg := &config.Config{
+		Version: 1,
+		Rules: []config.Rule{{
+			ID:       "AG-PATTERN-1",
+			Kind:     config.KindPattern,
+			Template: "dependency_constraint",
+			Severity: config.SeverityError,
+			Scope:    []string{"src/domain/**"},
+			Target:   []string{"src/infra/**"},
+			Params: map[string]string{
+				"relation": "imports",
+			},
+		}},
+	}
+	imports := []model.ImportRef{{
+		SourceFile:      "src/domain/user.ts",
+		RawImport:       "../infra/db",
+		ResolvedPath:    "src/infra/db.ts",
+		IsPackageImport: false,
+		Line:            1,
+		Column:          1,
+	}}
+	files := []string{"src/domain/user.ts", "src/infra/db.ts"}
+	g := graph.Build(imports, files)
+
+	findings, err := policy.Evaluate(cfg, imports, files, g)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(findings))
+	}
+}
+
+func TestEvaluate_PatternConstructionPolicy(t *testing.T) {
+	dir := t.TempDir()
+	wd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(wd) }()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir failed: %v", err)
+	}
+
+	mustWriteTestFile(t, filepath.Join("src", "services", "user.service.ts"), "export class UserService {}")
+	mustWriteTestFile(t, filepath.Join("src", "feature", "controller.ts"), "const svc = new UserService()")
+
+	cfg := &config.Config{
+		Version: 1,
+		Rules: []config.Rule{{
+			ID:       "AG-PATTERN-2",
+			Kind:     config.KindPattern,
+			Template: "construction_policy",
+			Severity: config.SeverityWarning,
+			Scope:    []string{"src/**"},
+			Target:   []string{"src/services/**"},
+			Except:   []string{"src/bootstrap/**"},
+			Params: map[string]string{
+				"service_name_regex": ".*Service$",
+			},
+		}},
+	}
+	files := []string{"src/services/user.service.ts", "src/feature/controller.ts"}
+	g := graph.Build(nil, files)
+	findings, err := policy.Evaluate(cfg, nil, files, g)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(findings) == 0 {
+		t.Fatal("expected construction_policy finding")
+	}
+}
+
+func mustWriteTestFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write failed: %v", err)
 	}
 }

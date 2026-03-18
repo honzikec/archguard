@@ -116,6 +116,13 @@ func validateRuleByKind(rule Rule) error {
 		if len(rule.Target) > 0 {
 			return fmt.Errorf("rule %s kind no_cycle does not support target", rule.ID)
 		}
+	case KindPattern:
+		if strings.TrimSpace(rule.Template) == "" {
+			return fmt.Errorf("rule %s kind pattern requires template", rule.ID)
+		}
+		if err := validatePatternTemplate(rule); err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("rule %s has unknown kind %q", rule.ID, rule.Kind)
 	}
@@ -124,11 +131,53 @@ func validateRuleByKind(rule Rule) error {
 
 func isValidKind(kind string) bool {
 	switch kind {
-	case KindNoImport, KindNoPackage, KindFilePattern, KindNoCycle:
+	case KindNoImport, KindNoPackage, KindFilePattern, KindNoCycle, KindPattern:
 		return true
 	default:
 		return false
 	}
+}
+
+func validatePatternTemplate(rule Rule) error {
+	switch rule.Template {
+	case "dependency_constraint":
+		if len(rule.Target) == 0 {
+			return fmt.Errorf("rule %s template dependency_constraint requires target", rule.ID)
+		}
+		relation := "imports"
+		if rule.Params != nil && strings.TrimSpace(rule.Params["relation"]) != "" {
+			relation = rule.Params["relation"]
+		}
+		switch relation {
+		case "imports":
+			for _, p := range rule.Target {
+				if err := validateGlob(p); err != nil {
+					return fmt.Errorf("rule %s target pattern %q invalid: %w", rule.ID, p, err)
+				}
+			}
+		case "packages":
+			// package globs are validated at evaluation time via matcher semantics.
+		default:
+			return fmt.Errorf("rule %s template dependency_constraint unsupported relation %q", rule.ID, relation)
+		}
+	case "construction_policy":
+		if len(rule.Target) == 0 {
+			return fmt.Errorf("rule %s template construction_policy requires target service globs", rule.ID)
+		}
+		for _, p := range rule.Target {
+			if err := validateGlob(p); err != nil {
+				return fmt.Errorf("rule %s target pattern %q invalid: %w", rule.ID, p, err)
+			}
+		}
+		if rule.Params != nil && strings.TrimSpace(rule.Params["service_name_regex"]) != "" {
+			if _, err := regexp.Compile(rule.Params["service_name_regex"]); err != nil {
+				return fmt.Errorf("rule %s invalid service_name_regex: %w", rule.ID, err)
+			}
+		}
+	default:
+		return fmt.Errorf("rule %s has unsupported pattern template %q", rule.ID, rule.Template)
+	}
+	return nil
 }
 
 func isValidSeverity(severity string) bool {

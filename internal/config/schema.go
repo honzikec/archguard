@@ -15,13 +15,15 @@ type ProjectSettings struct {
 }
 
 type Rule struct {
-	ID       string   `yaml:"id"`
-	Kind     string   `yaml:"kind"`
-	Severity string   `yaml:"severity"`
-	Scope    []string `yaml:"scope"`
-	Target   []string `yaml:"target,omitempty"`
-	Except   []string `yaml:"except,omitempty"`
-	Message  string   `yaml:"message,omitempty"`
+	ID       string            `yaml:"id"`
+	Kind     string            `yaml:"kind"`
+	Severity string            `yaml:"severity"`
+	Scope    []string          `yaml:"scope"`
+	Target   []string          `yaml:"target,omitempty"`
+	Except   []string          `yaml:"except,omitempty"`
+	Template string            `yaml:"template,omitempty"`
+	Params   map[string]string `yaml:"params,omitempty"`
+	Message  string            `yaml:"message,omitempty"`
 }
 
 const (
@@ -29,6 +31,7 @@ const (
 	KindNoPackage   = "no_package"
 	KindFilePattern = "file_pattern"
 	KindNoCycle     = "no_cycle"
+	KindPattern     = "pattern"
 )
 
 const (
