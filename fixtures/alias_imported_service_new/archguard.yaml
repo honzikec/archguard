@@ -1,0 +1,17 @@
+version: 1
+project:
+  roots: ["src"]
+  include: ["**/*.ts"]
+  exclude: ["**/node_modules/**"]
+  aliases:
+    "@/*": ["src/*"]
+rules:
+  - id: AG-CONSTRUCTION-POLICY
+    kind: pattern
+    template: construction_policy
+    severity: error
+    scope: ["src/**"]
+    target: ["src/services/**"]
+    except: ["src/bootstrap/**"]
+    params:
+      service_name_regex: ".*Service$"

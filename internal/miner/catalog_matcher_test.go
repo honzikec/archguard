@@ -23,11 +23,11 @@ func TestMatchCatalogDeterministicAndDeduped(t *testing.T) {
 		{Kind: config.KindNoPackage, Scope: []string{"src/domain/**"}, Target: []string{"axios"}, Support: 40, Prevalence: 0.00, Evidence: "pkg", Severity: config.SeverityWarning},
 	}
 
-	got1, err := miner.MatchCatalog(patterns, candidates, nil, miner.CatalogOptions{ShowLowConfidence: true})
+	got1, err := miner.MatchCatalog(patterns, candidates, nil, config.DefaultProjectSettings(), miner.CatalogOptions{ShowLowConfidence: true})
 	if err != nil {
 		t.Fatalf("match catalog: %v", err)
 	}
-	got2, err := miner.MatchCatalog(patterns, candidates, nil, miner.CatalogOptions{ShowLowConfidence: true})
+	got2, err := miner.MatchCatalog(patterns, candidates, nil, config.DefaultProjectSettings(), miner.CatalogOptions{ShowLowConfidence: true})
 	if err != nil {
 		t.Fatalf("match catalog second run: %v", err)
 	}
@@ -63,11 +63,11 @@ func TestMatchCatalogLowConfidenceFiltering(t *testing.T) {
 	files := []string{"src/services/user.service.ts", "src/feature/controller.ts"}
 	candidates := []miner.Candidate{}
 
-	hidden, err := miner.MatchCatalog(patterns, candidates, files, miner.CatalogOptions{ShowLowConfidence: false})
+	hidden, err := miner.MatchCatalog(patterns, candidates, files, config.DefaultProjectSettings(), miner.CatalogOptions{ShowLowConfidence: false})
 	if err != nil {
 		t.Fatalf("match hidden: %v", err)
 	}
-	shown, err := miner.MatchCatalog(patterns, candidates, files, miner.CatalogOptions{ShowLowConfidence: true})
+	shown, err := miner.MatchCatalog(patterns, candidates, files, config.DefaultProjectSettings(), miner.CatalogOptions{ShowLowConfidence: true})
 	if err != nil {
 		t.Fatalf("match shown: %v", err)
 	}

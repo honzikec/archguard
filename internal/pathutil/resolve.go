@@ -197,7 +197,7 @@ func (r *Resolver) probeLocal(base string) (string, bool) {
 	candidates := []string{base}
 
 	ext := filepath.Ext(base)
-	if ext == "" {
+	if ext == "" || !r.isKnownExtension(ext) {
 		for _, e := range r.extensions {
 			candidates = append(candidates, base+e)
 		}
@@ -216,4 +216,13 @@ func (r *Resolver) probeLocal(base string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func (r *Resolver) isKnownExtension(ext string) bool {
+	for _, e := range r.extensions {
+		if ext == e {
+			return true
+		}
+	}
+	return false
 }

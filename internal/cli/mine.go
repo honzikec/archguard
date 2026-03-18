@@ -98,7 +98,7 @@ func runMine(args []string) int {
 			fmt.Fprintf(os.Stderr, "failed to load built-in catalog: %v\n", err)
 			return 2
 		}
-		catalogMatches, err = miner.MatchCatalog(patterns, candidates, files, miner.CatalogOptions{
+		catalogMatches, err = miner.MatchCatalog(patterns, candidates, files, cfg.Project, miner.CatalogOptions{
 			ShowLowConfidence: *showLowConfidence,
 		})
 		if err != nil {

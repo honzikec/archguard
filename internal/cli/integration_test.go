@@ -138,6 +138,36 @@ func TestMineEmitConfigAdoptsCatalog(t *testing.T) {
 	}
 }
 
+func TestCheckConstructionPolicyPassCompositionRoot(t *testing.T) {
+	code, out, errOut := runCmdInDir(t, fixturePath("composition_root_only"), []string{
+		"check", "--config", "archguard.yaml", "--format", "json",
+	})
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%s output=%s", code, errOut, out)
+	}
+}
+
+func TestCheckConstructionPolicyFailAliasImportedService(t *testing.T) {
+	code, out, errOut := runCmdInDir(t, fixturePath("alias_imported_service_new"), []string{
+		"check", "--config", "archguard.yaml", "--format", "json",
+	})
+	if code != 1 {
+		t.Fatalf("expected exit 1, got %d stderr=%s output=%s", code, errOut, out)
+	}
+	if !strings.Contains(out, "AG-CONSTRUCTION-POLICY") {
+		t.Fatalf("expected construction policy finding, got: %s", out)
+	}
+}
+
+func TestCheckConstructionPolicyIgnoresUnresolvedDynamic(t *testing.T) {
+	code, out, errOut := runCmdInDir(t, fixturePath("dynamic_new_unresolved"), []string{
+		"check", "--config", "archguard.yaml", "--format", "json",
+	})
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%s output=%s", code, errOut, out)
+	}
+}
+
 func runCmdInDir(t *testing.T, dir string, args []string) (int, string, string) {
 	t.Helper()
 	cwd, _ := os.Getwd()

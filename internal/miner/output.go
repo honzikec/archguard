@@ -36,6 +36,13 @@ func PrintMineText(candidates []Candidate, catalogMatches []PatternMatch, catalo
 		fmt.Printf("score: %.3f\n", m.Score)
 		fmt.Printf("confidence: %s\n", m.Confidence)
 		fmt.Printf("evidence: %s\n", m.Evidence)
+		if m.ResolvedCount > 0 || m.UnresolvedCount > 0 {
+			fmt.Printf("resolved_count: %d\n", m.ResolvedCount)
+			fmt.Printf("unresolved_count: %d\n", m.UnresolvedCount)
+		}
+		if len(m.SampleLocations) > 0 {
+			fmt.Printf("sample_locations: %v\n", m.SampleLocations)
+		}
 		fmt.Printf("proposed_rule_id: %s\n", m.ProposedRule.ID)
 	}
 }

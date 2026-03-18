@@ -20,6 +20,10 @@ Catalog matches include:
 - `confidence` (`HIGH`, `MEDIUM`, `LOW`)
 - evidence
 - proposed concrete rule
+- optional precision metadata for construction patterns:
+  - `resolved_count`
+  - `unresolved_count`
+  - `sample_locations` (`file:line`)
 
 Only `MEDIUM+` confidence matches are shown by default.
 Use `--show-low-confidence` to include `LOW`.

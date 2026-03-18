@@ -4,9 +4,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
-	"os"
 	"path"
-	"regexp"
 	"sort"
 	"strings"
 
@@ -14,6 +12,7 @@ import (
 	"github.com/honzikec/archguard/internal/graph"
 	"github.com/honzikec/archguard/internal/model"
 	"github.com/honzikec/archguard/internal/pathutil"
+	"github.com/honzikec/archguard/internal/resolve"
 )
 
 func Evaluate(cfg *config.Config, imports []model.ImportRef, files []string, g *graph.Graph) ([]model.Finding, error) {
@@ -100,7 +99,7 @@ func Evaluate(cfg *config.Config, imports []model.ImportRef, files []string, g *
 				appendFinding(&findings, seen, f)
 			}
 		case config.KindPattern:
-			patternFindings, err := evaluatePatternRule(rule, imports, files)
+			patternFindings, err := evaluatePatternRule(rule, imports, files, cfg.Project)
 			if err != nil {
 				return nil, err
 			}
@@ -255,12 +254,12 @@ func canonicalCycle(cycle []string) string {
 	return best
 }
 
-func evaluatePatternRule(rule config.Rule, imports []model.ImportRef, files []string) ([]model.Finding, error) {
+func evaluatePatternRule(rule config.Rule, imports []model.ImportRef, files []string, project config.ProjectSettings) ([]model.Finding, error) {
 	switch rule.Template {
 	case "dependency_constraint":
 		return evaluatePatternDependencyConstraint(rule, imports), nil
 	case "construction_policy":
-		return evaluatePatternConstructionPolicy(rule, files)
+		return evaluatePatternConstructionPolicy(rule, files, project)
 	default:
 		return nil, fmt.Errorf("unsupported pattern template %q", rule.Template)
 	}
@@ -310,95 +309,32 @@ func evaluatePatternDependencyConstraint(rule config.Rule, imports []model.Impor
 	return findings
 }
 
-func evaluatePatternConstructionPolicy(rule config.Rule, files []string) ([]model.Finding, error) {
-	serviceNames := collectServiceClassNames(files, rule.Target)
-	newExpr := regexp.MustCompile(`\bnew\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(`)
-	serviceNameRegex := regexp.MustCompile(`.*Service$`)
+func evaluatePatternConstructionPolicy(rule config.Rule, files []string, project config.ProjectSettings) ([]model.Finding, error) {
+	serviceNameRegex := ".*Service$"
 	if rule.Params != nil && strings.TrimSpace(rule.Params["service_name_regex"]) != "" {
-		compiled, err := regexp.Compile(rule.Params["service_name_regex"])
-		if err != nil {
-			return nil, fmt.Errorf("invalid service_name_regex: %w", err)
-		}
-		serviceNameRegex = compiled
+		serviceNameRegex = rule.Params["service_name_regex"]
+	}
+
+	constructions, err := resolve.ResolveConstructions(files, project, rule.Target, serviceNameRegex)
+	if err != nil {
+		return nil, err
 	}
 
 	findings := make([]model.Finding, 0)
-	for _, file := range files {
-		if !matchesScope(rule.Scope, file) {
+	for _, c := range constructions {
+		if !matchesScope(rule.Scope, c.FilePath) {
 			continue
 		}
-		if isExcepted(rule.Except, file, "") {
+		if isExcepted(rule.Except, c.FilePath, "") {
 			continue
 		}
-		content, err := os.ReadFile(file)
-		if err != nil {
+		if !c.IsResolved || !c.IsService {
 			continue
 		}
-		text := string(content)
-		idxs := newExpr.FindAllStringSubmatchIndex(text, -1)
-		for _, idx := range idxs {
-			if len(idx) < 4 {
-				continue
-			}
-			nameStart, nameEnd := idx[2], idx[3]
-			if nameStart < 0 || nameEnd <= nameStart {
-				continue
-			}
-			className := text[nameStart:nameEnd]
-			if len(serviceNames) > 0 {
-				if _, ok := serviceNames[className]; !ok {
-					continue
-				}
-			} else if !serviceNameRegex.MatchString(className) {
-				continue
-			}
-			line, col := lineCol(content, idx[0])
-			f := baseFinding(rule, file, line, col, className)
-			f.Message = defaultMessage(rule, fmt.Sprintf("direct construction of service %s outside composition root", className))
-			findings = append(findings, f)
-		}
+		f := baseFinding(rule, c.FilePath, c.Line, c.Column, c.ClassName)
+		f.Message = defaultMessage(rule, fmt.Sprintf("direct construction of service %s outside composition root", c.ClassName))
+		findings = append(findings, f)
 	}
 
 	return findings, nil
-}
-
-func collectServiceClassNames(files []string, serviceGlobs []string) map[string]struct{} {
-	serviceNames := map[string]struct{}{}
-	classDecl := regexp.MustCompile(`\bclass\s+([A-Za-z_$][A-Za-z0-9_$]*)\b`)
-	for _, file := range files {
-		if !pathutil.MatchAny(serviceGlobs, file) {
-			continue
-		}
-		content, err := os.ReadFile(file)
-		if err != nil {
-			continue
-		}
-		text := string(content)
-		idxs := classDecl.FindAllStringSubmatchIndex(text, -1)
-		for _, idx := range idxs {
-			if len(idx) < 4 {
-				continue
-			}
-			nameStart, nameEnd := idx[2], idx[3]
-			if nameStart < 0 || nameEnd <= nameStart {
-				continue
-			}
-			serviceNames[text[nameStart:nameEnd]] = struct{}{}
-		}
-	}
-	return serviceNames
-}
-
-func lineCol(content []byte, index int) (int, int) {
-	line := 1
-	col := 1
-	for i := 0; i < len(content) && i < index; i++ {
-		if content[i] == '\n' {
-			line++
-			col = 1
-		} else {
-			col++
-		}
-	}
-	return line, col
 }

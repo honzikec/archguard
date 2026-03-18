@@ -172,7 +172,7 @@ func TestEvaluate_PatternConstructionPolicy(t *testing.T) {
 	}
 
 	mustWriteTestFile(t, filepath.Join("src", "services", "user.service.ts"), "export class UserService {}")
-	mustWriteTestFile(t, filepath.Join("src", "feature", "controller.ts"), "const svc = new UserService()")
+	mustWriteTestFile(t, filepath.Join("src", "feature", "controller.ts"), "import { UserService } from '../services/user.service'\nconst svc = new UserService()")
 
 	cfg := &config.Config{
 		Version: 1,

@@ -4,7 +4,6 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
-	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -13,23 +12,27 @@ import (
 	"github.com/honzikec/archguard/internal/catalog"
 	"github.com/honzikec/archguard/internal/config"
 	"github.com/honzikec/archguard/internal/pathutil"
+	"github.com/honzikec/archguard/internal/resolve"
 )
 
 type PatternMatch struct {
-	CatalogID    string      `json:"catalog_id" yaml:"catalog_id"`
-	Name         string      `json:"name" yaml:"name"`
-	Category     string      `json:"category" yaml:"category"`
-	Score        float64     `json:"score" yaml:"score"`
-	Confidence   string      `json:"confidence" yaml:"confidence"`
-	Evidence     string      `json:"evidence" yaml:"evidence"`
-	ProposedRule config.Rule `json:"proposed_rule" yaml:"proposed_rule"`
+	CatalogID       string      `json:"catalog_id" yaml:"catalog_id"`
+	Name            string      `json:"name" yaml:"name"`
+	Category        string      `json:"category" yaml:"category"`
+	Score           float64     `json:"score" yaml:"score"`
+	Confidence      string      `json:"confidence" yaml:"confidence"`
+	Evidence        string      `json:"evidence" yaml:"evidence"`
+	ResolvedCount   int         `json:"resolved_count,omitempty" yaml:"resolved_count,omitempty"`
+	UnresolvedCount int         `json:"unresolved_count,omitempty" yaml:"unresolved_count,omitempty"`
+	SampleLocations []string    `json:"sample_locations,omitempty" yaml:"sample_locations,omitempty"`
+	ProposedRule    config.Rule `json:"proposed_rule" yaml:"proposed_rule"`
 }
 
 type CatalogOptions struct {
 	ShowLowConfidence bool
 }
 
-func MatchCatalog(patterns []catalog.Pattern, candidates []Candidate, files []string, opts CatalogOptions) ([]PatternMatch, error) {
+func MatchCatalog(patterns []catalog.Pattern, candidates []Candidate, files []string, project config.ProjectSettings, opts CatalogOptions) ([]PatternMatch, error) {
 	matches := make([]PatternMatch, 0)
 	for _, pattern := range patterns {
 		switch pattern.Detection.Heuristic.Type {
@@ -38,7 +41,7 @@ func MatchCatalog(patterns []catalog.Pattern, candidates []Candidate, files []st
 		case "prevalence_package_boundary":
 			matches = append(matches, matchPrevalencePackageBoundary(pattern, candidates)...)
 		case "construction_new_outside_root":
-			m, ok, err := matchConstructionPattern(pattern, files)
+			m, ok, err := matchConstructionPattern(pattern, files, project)
 			if err != nil {
 				return nil, err
 			}
@@ -145,7 +148,7 @@ func matchPrevalencePackageBoundary(pattern catalog.Pattern, candidates []Candid
 	return matches
 }
 
-func matchConstructionPattern(pattern catalog.Pattern, files []string) (PatternMatch, bool, error) {
+func matchConstructionPattern(pattern catalog.Pattern, files []string, project config.ProjectSettings) (PatternMatch, bool, error) {
 	scopeGlobs := toStringSlice(pattern.Detection.Heuristic.Params["scope_globs"])
 	serviceGlobs := toStringSlice(pattern.Detection.Heuristic.Params["service_globs"])
 	allowedNewGlobs := toStringSlice(pattern.Detection.Heuristic.Params["allowed_new_globs"])
@@ -153,52 +156,46 @@ func matchConstructionPattern(pattern catalog.Pattern, files []string) (PatternM
 	minSupport := toInt(pattern.Detection.Heuristic.Params["min_support"], 20)
 	serviceNamePattern := toString(pattern.Detection.Heuristic.Params["service_name_regex"], ".*Service$")
 
-	serviceNameRegex, err := regexp.Compile(serviceNamePattern)
-	if err != nil {
-		return PatternMatch{}, false, fmt.Errorf("invalid service_name_regex for %s: %w", pattern.ID, err)
-	}
-
-	serviceNames := collectServiceNamesForMatcher(files, serviceGlobs)
-	newExpr := regexp.MustCompile(`\bnew\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(`)
-
 	support := 0
 	violations := 0
+	resolvedCount := 0
+	unresolvedCount := 0
 	evidenceExamples := make([]string, 0, 3)
+	sampleLocations := make([]string, 0, 3)
+
+	constructions, err := resolve.ResolveConstructions(files, project, serviceGlobs, serviceNamePattern)
+	if err != nil {
+		return PatternMatch{}, false, err
+	}
 
 	for _, file := range files {
 		if !pathutil.MatchAny(scopeGlobs, file) {
 			continue
 		}
 		support++
-		if pathutil.MatchAny(allowedNewGlobs, file) {
+	}
+
+	for _, c := range constructions {
+		if !pathutil.MatchAny(scopeGlobs, c.FilePath) {
 			continue
 		}
-		content, err := os.ReadFile(file)
-		if err != nil {
+		if c.IsResolved {
+			resolvedCount++
+		} else {
+			unresolvedCount++
+		}
+		if pathutil.MatchAny(allowedNewGlobs, c.FilePath) {
 			continue
 		}
-		text := string(content)
-		idxs := newExpr.FindAllStringSubmatchIndex(text, -1)
-		for _, idx := range idxs {
-			if len(idx) < 4 {
-				continue
-			}
-			start, end := idx[2], idx[3]
-			if start < 0 || end <= start {
-				continue
-			}
-			className := text[start:end]
-			if len(serviceNames) > 0 {
-				if _, ok := serviceNames[className]; !ok {
-					continue
-				}
-			} else if !serviceNameRegex.MatchString(className) {
-				continue
-			}
-			violations++
-			if len(evidenceExamples) < 3 {
-				evidenceExamples = append(evidenceExamples, fmt.Sprintf("%s:new %s", file, className))
-			}
+		if !c.IsResolved || !c.IsService {
+			continue
+		}
+		violations++
+		if len(evidenceExamples) < 3 {
+			evidenceExamples = append(evidenceExamples, fmt.Sprintf("%s:new %s", c.FilePath, c.ClassName))
+		}
+		if len(sampleLocations) < 3 {
+			sampleLocations = append(sampleLocations, fmt.Sprintf("%s:%d", c.FilePath, c.Line))
 		}
 	}
 
@@ -207,16 +204,19 @@ func matchConstructionPattern(pattern catalog.Pattern, files []string) (PatternM
 	}
 
 	prevalence := float64(violations) / float64(support)
-	structuralFit := 0.7
-	if len(serviceNames) > 0 {
-		structuralFit = 1.0
+	structuralFit := 0.5
+	if resolvedCount > 0 {
+		structuralFit = clamp(float64(resolvedCount)/float64(resolvedCount+unresolvedCount), 0, 1)
 	}
 	prevalenceSupport := prevalenceSupportScore(prevalence, support, maxPrevalence, minSupport)
-	naming := 0.8
+	naming := 0.6
+	if unresolvedCount > 0 && resolvedCount == 0 {
+		naming = 0.3
+	}
 	score := weightedScore(structuralFit, prevalenceSupport, naming)
 	confidence := confidenceFromScore(score)
 
-	evidence := fmt.Sprintf("%d/%d scoped files instantiate service classes", violations, support)
+	evidence := fmt.Sprintf("%d/%d scoped files instantiate service classes (resolved=%d unresolved=%d)", violations, support, resolvedCount, unresolvedCount)
 	if len(evidenceExamples) > 0 {
 		evidence = evidence + "; examples: " + strings.Join(evidenceExamples, ", ")
 	}
@@ -237,13 +237,16 @@ func matchConstructionPattern(pattern catalog.Pattern, files []string) (PatternM
 	}
 
 	return PatternMatch{
-		CatalogID:    pattern.ID,
-		Name:         pattern.Name,
-		Category:     pattern.Category,
-		Score:        score,
-		Confidence:   confidence,
-		Evidence:     evidence,
-		ProposedRule: rule,
+		CatalogID:       pattern.ID,
+		Name:            pattern.Name,
+		Category:        pattern.Category,
+		Score:           score,
+		Confidence:      confidence,
+		Evidence:        evidence,
+		ResolvedCount:   resolvedCount,
+		UnresolvedCount: unresolvedCount,
+		SampleLocations: sampleLocations,
+		ProposedRule:    rule,
 	}, true, nil
 }
 
@@ -387,32 +390,6 @@ func AdoptCatalogMatches(matches []PatternMatch, threshold string) []config.Rule
 		out = append(out, m.ProposedRule)
 	}
 	return out
-}
-
-func collectServiceNamesForMatcher(files []string, serviceGlobs []string) map[string]struct{} {
-	serviceNames := map[string]struct{}{}
-	classDecl := regexp.MustCompile(`\bclass\s+([A-Za-z_$][A-Za-z0-9_$]*)\b`)
-	for _, file := range files {
-		if !pathutil.MatchAny(serviceGlobs, file) {
-			continue
-		}
-		content, err := os.ReadFile(file)
-		if err != nil {
-			continue
-		}
-		idxs := classDecl.FindAllStringSubmatchIndex(string(content), -1)
-		for _, idx := range idxs {
-			if len(idx) < 4 {
-				continue
-			}
-			start, end := idx[2], idx[3]
-			if start < 0 || end <= start {
-				continue
-			}
-			serviceNames[string(content[start:end])] = struct{}{}
-		}
-	}
-	return serviceNames
 }
 
 func toStringSlice(v any) []string {
