@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/honzikec/archguard/internal/framework"
 )
 
 func Validate(cfg *Config) error {
@@ -57,10 +59,12 @@ func Validate(cfg *Config) error {
 }
 
 func validateProject(project ProjectSettings) error {
-	if framework := strings.ToLower(strings.TrimSpace(project.Framework)); framework != "" {
-		switch framework {
-		case "generic", "nextjs":
-		default:
+	if frameworkID := strings.ToLower(strings.TrimSpace(project.Framework)); frameworkID != "" {
+		allowed := map[string]struct{}{}
+		for _, id := range framework.RegisteredFrameworks() {
+			allowed[id] = struct{}{}
+		}
+		if _, ok := allowed[frameworkID]; !ok {
 			return fmt.Errorf("project.framework has unsupported value %q", project.Framework)
 		}
 	}

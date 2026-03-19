@@ -31,6 +31,7 @@ archguard check   --config archguard.yaml --format text|json|sarif
 archguard mine    --config archguard.yaml --format text|yaml|json --catalog builtin
 archguard explain --config archguard.yaml --rule RULE_ID
 archguard init    --config archguard.yaml
+archguard init profile --name my_framework
 archguard version
 ```
 
@@ -39,7 +40,7 @@ Default check behavior:
 - Exit codes: `0` pass, `1` blocking violations, `2` runtime/config/usage error
 
 Mining note:
-- `mine` auto-detects Next.js via `next.config.*` and normalizes app-router route segments to reduce noisy candidate explosion.
+- `mine` uses a framework-aware normalization layer (`generic|nextjs|react_router|react_native|angular`) and keeps `check` semantics generic.
 
 ## Example config
 
@@ -49,7 +50,7 @@ project:
   roots: ["."]
   include: ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"]
   exclude: ["**/node_modules/**", "**/dist/**", "**/build/**", "**/.next/**", "**/coverage/**", "**/.git/**"]
-  framework: nextjs # optional; generic|nextjs
+  framework: nextjs # optional; generic|nextjs|react_router|react_native|angular
   aliases:
     "@/*": ["src/*"]
 
@@ -101,6 +102,8 @@ rules:
 - [Rules](docs/rules.md)
 - [CLI](docs/cli.md)
 - [Framework Layer](docs/frameworks.md)
+- [Language Adapters](docs/languages.md)
+- [Extension Guide](docs/extensions.md)
 - [Pattern Catalog](docs/catalog.md)
 - [Catalog Sources](docs/catalog-sources.md)
 - [GitHub CI](docs/ci-github.md)

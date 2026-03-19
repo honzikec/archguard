@@ -17,6 +17,9 @@ GOCACHE=/tmp/go-build go test ./...
 - Output formats (`text`, `json`, `sarif`) should remain deterministic
 - Add tests for new parser/resolver/policy behavior
 - Framework-aware mining extensions should follow `docs/frameworks.md`
+- Framework profiles must stay encapsulated (`internal/framework/profiles/<id>`)
+- Language parsing/discovery changes should go through language adapters (`internal/language/*`)
+- Prefer focused PRs: one framework profile or one language adapter per PR
 
 ## Fixture expectations
 

@@ -5,19 +5,22 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/honzikec/archguard/internal/config"
+	"github.com/honzikec/archguard/internal/framework"
 )
 
-func TestResolveMiningFramework(t *testing.T) {
-	if got := resolveMiningFramework(config.ProjectSettings{Framework: "nextjs"}); got != "nextjs" {
-		t.Fatalf("expected explicit nextjs framework, got %q", got)
+func TestResolveFrameworkExplicit(t *testing.T) {
+	res := framework.Resolve("nextjs", nil)
+	if res.Selected != "nextjs" || res.Reason != "explicit" {
+		t.Fatalf("expected explicit nextjs selection, got %+v", res)
 	}
-	if got := resolveMiningFramework(config.ProjectSettings{Framework: "generic"}); got != "" {
-		t.Fatalf("expected explicit generic to disable framework profile, got %q", got)
+
+	res = framework.Resolve("generic", nil)
+	if res.Selected != "" || res.Reason != "explicit_generic" {
+		t.Fatalf("expected explicit generic selection, got %+v", res)
 	}
 }
 
-func TestResolveMiningFrameworkAutoDetectsNextConfig(t *testing.T) {
+func TestResolveFrameworkAutoDetectsNextConfig(t *testing.T) {
 	dir := t.TempDir()
 	wd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(wd) }()
@@ -28,27 +31,31 @@ func TestResolveMiningFrameworkAutoDetectsNextConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := resolveMiningFramework(config.ProjectSettings{}); got != "nextjs" {
-		t.Fatalf("expected autodetected nextjs framework, got %q", got)
+	res := framework.Resolve("", []string{"."})
+	if res.Selected != "nextjs" || res.Reason != "auto_detected" {
+		t.Fatalf("expected autodetected nextjs framework, got %+v", res)
 	}
 }
 
-func TestResolveMiningFrameworkAutoDetectsNestedNextConfig(t *testing.T) {
+func TestResolveFrameworkAmbiguousFallsBackToGeneric(t *testing.T) {
 	dir := t.TempDir()
 	wd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(wd) }()
 	if err := os.Chdir(dir); err != nil {
 		t.Fatal(err)
 	}
-	nested := filepath.Join(dir, "apps", "frontend")
-	if err := os.MkdirAll(nested, 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "next.config.js"), []byte("module.exports = {}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(nested, "next.config.js"), []byte("module.exports = {}"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "angular.json"), []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	if got := resolveMiningFramework(config.ProjectSettings{Roots: []string{"."}}); got != "nextjs" {
-		t.Fatalf("expected nested next config to be detected, got %q", got)
+	res := framework.Resolve("", []string{"."})
+	if res.Selected != "" {
+		t.Fatalf("expected ambiguous autodetect to fall back to generic, got %+v", res)
+	}
+	if res.Reason != "auto_ambiguous" {
+		t.Fatalf("expected auto_ambiguous reason, got %+v", res)
 	}
 }

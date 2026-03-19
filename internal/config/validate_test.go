@@ -74,13 +74,16 @@ func TestValidatePatternRule(t *testing.T) {
 }
 
 func TestValidateProjectFramework(t *testing.T) {
-	valid := &config.Config{
-		Version: 1,
-		Project: config.ProjectSettings{Framework: "nextjs"},
-		Rules:   []config.Rule{},
-	}
-	if err := config.Validate(valid); err != nil {
-		t.Fatalf("expected nextjs framework to validate, got error: %v", err)
+	validFrameworks := []string{"generic", "nextjs", "react_router", "react_native", "angular"}
+	for _, frameworkID := range validFrameworks {
+		valid := &config.Config{
+			Version: 1,
+			Project: config.ProjectSettings{Framework: frameworkID},
+			Rules:   []config.Rule{},
+		}
+		if err := config.Validate(valid); err != nil {
+			t.Fatalf("expected framework %q to validate, got error: %v", frameworkID, err)
+		}
 	}
 
 	invalid := &config.Config{

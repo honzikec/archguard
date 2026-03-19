@@ -17,15 +17,3 @@ func shouldSkipDir(dirPath string, excludePatterns []string) bool {
 	}
 	return false
 }
-
-func isSupportedFile(path string) bool {
-	if strings.Contains(path, ".gen.") {
-		return false
-	}
-	for _, ext := range []string{".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"} {
-		if strings.HasSuffix(path, ext) {
-			return true
-		}
-	}
-	return false
-}

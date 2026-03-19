@@ -10,8 +10,8 @@ import (
 	"github.com/honzikec/archguard/internal/config"
 	"github.com/honzikec/archguard/internal/fileset"
 	"github.com/honzikec/archguard/internal/graph"
+	"github.com/honzikec/archguard/internal/language"
 	"github.com/honzikec/archguard/internal/model"
-	"github.com/honzikec/archguard/internal/parser"
 	"github.com/honzikec/archguard/internal/pathutil"
 	"github.com/honzikec/archguard/internal/policy"
 	"github.com/honzikec/archguard/internal/report"
@@ -44,7 +44,16 @@ func runCheck(args []string) int {
 		return 2
 	}
 
-	files, err := fileset.Discover(cfg.Project)
+	languageResolution := language.Resolve(cfg.Project.Roots)
+	if languageResolution.Adapter == nil {
+		fmt.Fprintf(os.Stderr, "failed to resolve language adapter\n")
+		return 2
+	}
+	if common.debug {
+		fmt.Fprintf(os.Stderr, "language adapter: %s (%s)\n", languageResolution.Selected, languageResolution.Reason)
+	}
+
+	files, err := fileset.DiscoverWithAdapter(cfg.Project, languageResolution.Adapter)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to discover files: %v\n", err)
 		return 2
@@ -65,7 +74,7 @@ func runCheck(args []string) int {
 
 	allImports := make([]model.ImportRef, 0)
 	for _, file := range files {
-		imports, err := parser.ParseFile(file)
+		imports, err := languageResolution.Adapter.ParseFile(file)
 		if err != nil {
 			if common.debug {
 				fmt.Fprintf(os.Stderr, "parse error %s: %v\n", file, err)

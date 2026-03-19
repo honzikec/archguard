@@ -14,8 +14,39 @@ type MineOutput struct {
 	CatalogMatches []PatternMatch `json:"catalog_matches,omitempty"`
 }
 
-func PrintMineText(candidates []Candidate, catalogMatches []PatternMatch, catalogFormat string, debug bool) {
+type MineNormalizationStats struct {
+	OriginalNodes   int `json:"original_nodes"`
+	NormalizedNodes int `json:"normalized_nodes"`
+	OriginalFiles   int `json:"original_files"`
+	NormalizedFiles int `json:"normalized_files"`
+}
+
+type MineMetadata struct {
+	FrameworkProfile string                 `json:"framework_profile"`
+	FrameworkReason  string                 `json:"framework_reason"`
+	FrameworkMatched []string               `json:"framework_matched,omitempty"`
+	LanguageAdapter  string                 `json:"language_adapter"`
+	LanguageReason   string                 `json:"language_reason"`
+	Normalization    MineNormalizationStats `json:"normalization"`
+}
+
+func PrintMineText(candidates []Candidate, catalogMatches []PatternMatch, catalogFormat string, debug bool, metadata MineMetadata) {
 	PrintText(candidates)
+	if debug {
+		fmt.Println("---")
+		fmt.Printf("framework_profile: %s\n", metadata.FrameworkProfile)
+		fmt.Printf("framework_reason: %s\n", metadata.FrameworkReason)
+		if len(metadata.FrameworkMatched) > 0 {
+			fmt.Printf("framework_matched: %v\n", metadata.FrameworkMatched)
+		}
+		fmt.Printf("language_adapter: %s\n", metadata.LanguageAdapter)
+		fmt.Printf("language_reason: %s\n", metadata.LanguageReason)
+		fmt.Printf("normalization: original_nodes=%d normalized_nodes=%d original_files=%d normalized_files=%d\n",
+			metadata.Normalization.OriginalNodes,
+			metadata.Normalization.NormalizedNodes,
+			metadata.Normalization.OriginalFiles,
+			metadata.Normalization.NormalizedFiles)
+	}
 	if len(catalogMatches) == 0 {
 		return
 	}
@@ -63,7 +94,8 @@ func PrintMineText(candidates []Candidate, catalogMatches []PatternMatch, catalo
 	}
 }
 
-func PrintMineJSON(candidates []Candidate, catalogMatches []PatternMatch) {
+func PrintMineJSON(candidates []Candidate, catalogMatches []PatternMatch, metadata MineMetadata) {
+	_ = metadata
 	payload := MineOutput{Candidates: candidates, CatalogMatches: catalogMatches}
 	data, _ := json.MarshalIndent(payload, "", "  ")
 	fmt.Println(string(data))

@@ -37,7 +37,8 @@ Output notes:
 - `catalog_matches[]` includes scoring metrics (`scoped_files`, `eligible_files`, `violating_files`, `support`, `prevalence`, `score_components`)
 - construction matches also include precision evidence (`resolved_examples`, `unresolved_reasons`, `sample_locations`)
 - text output stays concise by default; use `--debug` to print detailed catalog scoring/evidence
-- mine auto-detects Next.js (`next.config.*`) and applies route-segment normalization; override with `project.framework`
+- `--debug` also prints framework profile resolution and mining normalization stats
+- mine resolves a framework profile (`generic|nextjs|react_router|react_native|angular`) and applies normalization only to mining inputs
 - With `--emit-config --adopt-catalog`, adopted catalog rules are appended to emitted config
 
 ## `archguard explain`
@@ -52,6 +53,10 @@ Flags:
 Flags:
 - `--config`
 - `--force`
+
+Subcommands:
+- `archguard init` writes a starter config file
+- `archguard init profile --name <id> [--dir <path>] [--force]` scaffolds a framework profile package for contributors
 
 ## `archguard version`
 

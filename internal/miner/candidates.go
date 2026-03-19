@@ -15,7 +15,6 @@ import (
 type Options struct {
 	MinSupport    int
 	MaxPrevalence float64
-	Framework     string
 }
 
 type Candidate struct {
@@ -37,7 +36,6 @@ func Propose(g *graph.Graph, allFiles []string, opts Options) []Candidate {
 	if opts.MaxPrevalence <= 0 {
 		opts.MaxPrevalence = 0.02
 	}
-	g, allFiles = normalizeMiningInputs(g, allFiles, opts.Framework)
 
 	candidates := make([]Candidate, 0)
 	candidates = append(candidates, proposeNoImport(g, opts)...)

@@ -4,16 +4,17 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/honzikec/archguard/internal/catalog"
 	"github.com/honzikec/archguard/internal/config"
 	"github.com/honzikec/archguard/internal/fileset"
+	"github.com/honzikec/archguard/internal/framework"
 	"github.com/honzikec/archguard/internal/graph"
+	"github.com/honzikec/archguard/internal/language"
 	"github.com/honzikec/archguard/internal/miner"
 	"github.com/honzikec/archguard/internal/model"
-	"github.com/honzikec/archguard/internal/parser"
 	"github.com/honzikec/archguard/internal/pathutil"
 )
 
@@ -62,7 +63,13 @@ func runMine(args []string) int {
 		return 2
 	}
 
-	files, err := fileset.Discover(cfg.Project)
+	languageResolution := language.Resolve(cfg.Project.Roots)
+	if languageResolution.Adapter == nil {
+		fmt.Fprintln(os.Stderr, "failed to resolve language adapter")
+		return 2
+	}
+
+	files, err := fileset.DiscoverWithAdapter(cfg.Project, languageResolution.Adapter)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to discover files: %v\n", err)
 		return 2
@@ -75,7 +82,7 @@ func runMine(args []string) int {
 
 	imports := make([]model.ImportRef, 0)
 	for _, file := range files {
-		parsed, err := parser.ParseFile(file)
+		parsed, err := languageResolution.Adapter.ParseFile(file)
 		if err != nil {
 			if common.debug {
 				fmt.Fprintf(os.Stderr, "parse error %s: %v\n", file, err)
@@ -91,14 +98,11 @@ func runMine(args []string) int {
 	}
 
 	g := graph.Build(imports, files)
-	framework := resolveMiningFramework(cfg.Project)
-	if common.debug && framework != "" {
-		fmt.Fprintf(os.Stderr, "mine framework profile: %s\n", framework)
-	}
-	candidates := miner.Propose(g, files, miner.Options{
+	frameworkResolution := framework.Resolve(cfg.Project.Framework, cfg.Project.Roots)
+	normalizedGraph, normalizedFiles, normalizationStats := framework.NormalizeMiningInputs(g, files, frameworkResolution.Selected)
+	candidates := miner.Propose(normalizedGraph, normalizedFiles, miner.Options{
 		MinSupport:    *minSupport,
 		MaxPrevalence: *maxPrevalence,
-		Framework:     framework,
 	})
 	catalogMatches := make([]miner.PatternMatch, 0)
 
@@ -115,6 +119,36 @@ func runMine(args []string) int {
 			fmt.Fprintf(os.Stderr, "failed to match catalog patterns: %v\n", err)
 			return 2
 		}
+	}
+
+	metadata := miner.MineMetadata{
+		FrameworkProfile: frameworkResolution.EffectiveProfile(),
+		FrameworkReason:  frameworkResolution.Reason,
+		FrameworkMatched: append([]string{}, frameworkResolution.Matched...),
+		LanguageAdapter:  languageResolution.Selected,
+		LanguageReason:   languageResolution.Reason,
+		Normalization: miner.MineNormalizationStats{
+			OriginalNodes:   normalizationStats.OriginalNodes,
+			NormalizedNodes: normalizationStats.NormalizedNodes,
+			OriginalFiles:   normalizationStats.OriginalFiles,
+			NormalizedFiles: normalizationStats.NormalizedFiles,
+		},
+	}
+
+	if common.debug {
+		fmt.Fprintf(os.Stderr, "mine framework profile: %s (%s)\n", metadata.FrameworkProfile, metadata.FrameworkReason)
+		if len(metadata.FrameworkMatched) > 0 {
+			sorted := append([]string{}, metadata.FrameworkMatched...)
+			sort.Strings(sorted)
+			fmt.Fprintf(os.Stderr, "mine framework matches: %s\n", strings.Join(sorted, ", "))
+		}
+		fmt.Fprintf(os.Stderr, "mine language adapter: %s (%s)\n", metadata.LanguageAdapter, metadata.LanguageReason)
+		fmt.Fprintf(os.Stderr, "mine normalization: nodes %d->%d files %d->%d\n",
+			metadata.Normalization.OriginalNodes,
+			metadata.Normalization.NormalizedNodes,
+			metadata.Normalization.OriginalFiles,
+			metadata.Normalization.NormalizedFiles,
+		)
 	}
 
 	if *emitConfig {
@@ -135,9 +169,9 @@ func runMine(args []string) int {
 	case "yaml":
 		miner.PrintYAML(candidates)
 	case "json":
-		miner.PrintMineJSON(candidates, catalogMatches)
+		miner.PrintMineJSON(candidates, catalogMatches, metadata)
 	default:
-		miner.PrintMineText(candidates, catalogMatches, *catalogFormat, common.debug)
+		miner.PrintMineText(candidates, catalogMatches, *catalogFormat, common.debug, metadata)
 	}
 	return 0
 }
@@ -150,50 +184,4 @@ func loadConfigOptional(path string) (*config.Config, error) {
 		return nil, err
 	}
 	return config.Load(path)
-}
-
-func resolveMiningFramework(project config.ProjectSettings) string {
-	explicit := strings.ToLower(strings.TrimSpace(project.Framework))
-	switch explicit {
-	case "generic":
-		return ""
-	case "nextjs":
-		return "nextjs"
-	}
-
-	roots := project.Roots
-	if len(roots) == 0 {
-		roots = []string{"."}
-	}
-	if hasNextConfig(roots) {
-		return "nextjs"
-	}
-	return ""
-}
-
-func hasNextConfig(roots []string) bool {
-	configNames := []string{"next.config.js", "next.config.mjs", "next.config.ts", "next.config.cjs"}
-	for _, root := range roots {
-		root = strings.TrimSpace(root)
-		if root == "" {
-			continue
-		}
-		searchPrefixes := []string{
-			root,
-			filepath.Join(root, "*"),
-			filepath.Join(root, "*", "*"),
-		}
-		for _, prefix := range searchPrefixes {
-			for _, name := range configNames {
-				matches, err := filepath.Glob(filepath.Join(prefix, name))
-				if err != nil {
-					continue
-				}
-				if len(matches) > 0 {
-					return true
-				}
-			}
-		}
-	}
-	return false
 }

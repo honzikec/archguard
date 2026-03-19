@@ -1,71 +1,59 @@
 # Framework-Aware Mining Layer
 
-ArchGuard keeps core analysis generic, then applies an optional framework-aware normalization layer during `mine`.
+ArchGuard keeps policy enforcement generic and applies optional framework-aware normalization only during `mine`.
 
-This lets contributors improve candidate quality for specific ecosystems (for example, Next.js app router) without changing parser/resolver/policy semantics.
+## Design principles
 
-## Design intent
+- `check` semantics stay framework-agnostic.
+- Framework behavior is isolated in profile modules.
+- Profile selection and normalization are deterministic.
+- Contributors can add one framework profile in one encapsulated package.
 
-- Keep `check` and rule enforcement generic and deterministic.
-- Apply framework adaptation only to mining inputs.
-- Preserve stable output behavior (`text`, `json`, `yaml`) and deterministic ordering.
-- Make framework support pluggable and low-risk.
+## Architecture
 
-## Current architecture
+1. `mine` resolves profile via `internal/framework.Resolve(...)`.
+   - explicit `project.framework` wins
+   - auto-detect selects a single matching profile
+   - ambiguous auto-detect falls back to `generic`
+2. `mine` normalizes graph/files through `internal/framework.NormalizeMiningInputs(...)`.
+3. Candidate mining and catalog matching run on normalized inputs.
 
-1. CLI resolves framework profile in `runMine`:
-   - explicit: `project.framework` (`generic` or `nextjs`)
-   - auto-detect: known framework config files under project roots
-2. `mine` passes framework into `miner.Options.Framework`.
-3. `miner.Propose(...)` normalizes graph/files via `normalizeMiningInputs(...)`.
-4. Candidate mining runs on normalized graph/files.
+Profile packages:
+- `internal/framework/profiles/nextjs`
+- `internal/framework/profiles/react_router`
+- `internal/framework/profiles/react_native`
+- `internal/framework/profiles/angular`
 
-Key files:
-- `internal/cli/mine.go`
-- `internal/miner/candidates.go`
-- `internal/miner/framework_normalize.go`
-- `internal/config/schema.go`
-- `internal/config/validate.go`
+Shared helpers:
+- `internal/framework/common`
 
-## Next.js profile behavior
+## Built-in profiles
 
-Current Next.js normalization collapses path segments to reduce route-fragment noise:
-- route groups: `(marketing)` -> `(group)`
-- dynamic segments: `[slug]`, `[[...slug]]` -> `[param]`
-- parallel routes: `@modal` -> `@slot`
+- `nextjs`
+  - route groups `(x)` -> `(group)`
+  - dynamic segments `[id]`/`[[...id]]` -> `[param]`
+  - parallel routes `@slotName` -> `@slot`
+- `react_router`
+  - route param segments `:id`/`$id` -> `[param]`
+  - `_index` normalization
+  - file token normalization for route params
+- `react_native`
+  - platform files collapse (`.ios/.android/.native/.web`) -> `.platform`
+- `angular`
+  - route param subtree normalization (`:id` -> `[param]`)
+  - route filename normalization (`-routing` / `.routing` -> `-routes` / `.routes`)
 
-This is intentionally lossy for mining because we care about architectural boundaries, not route parameter names.
+## Contributor workflow
 
-## How to add a new framework profile
+1. Scaffold a profile:
+   - `archguard init profile --name my_framework`
+2. Implement profile logic only in its package.
+3. Wire registration once in `internal/framework/registry.go`.
+4. Add profile-local tests + conformance coverage.
+5. Update `docs/config.md`, `docs/cli.md`, and this file.
 
-1. Add schema support:
-   - extend allowed `project.framework` values in `internal/config/validate.go`
-2. Add profile detection:
-   - update `resolveMiningFramework(...)` in `internal/cli/mine.go`
-   - support both explicit config and safe auto-detection
-3. Add normalization logic:
-   - extend `normalizeSubtreeForFramework(...)` in `internal/miner/framework_normalize.go`
-   - keep normalization deterministic and idempotent
-4. Keep scope limited:
-   - normalize only mining graph/file inputs
-   - do not change parser, resolver, or policy evaluation for `check`
-5. Add tests:
-   - config validation test for new `project.framework` value
-   - normalization unit tests for segment mapping and edge aggregation
-   - CLI test for framework auto-detection behavior
-6. Update docs:
-   - `docs/config.md` and `docs/cli.md`
-   - this file (`docs/frameworks.md`)
+## Guardrails
 
-## Contributor guardrails
-
-- Do not introduce framework-specific behavior into rule semantics unless explicitly designed as a rule feature.
-- Prefer normalization at directory/segment level over file-by-file heuristics.
-- Avoid probabilistic or non-deterministic logic.
-- Ensure normalized paths still produce stable sorting/dedupe.
-
-## Validation checklist
-
-- `GOCACHE=/tmp/go-build go test ./...` passes.
-- `mine --debug` shows expected framework profile when auto-detected.
-- Candidate count/shape improves on representative framework repos.
+- Do not add framework-specific behavior to `check` in profile PRs.
+- Keep normalization idempotent and deterministic.
+- Keep profile PRs focused: registry wiring + one profile package + tests/docs.

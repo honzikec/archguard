@@ -8,10 +8,21 @@ import (
 	"sort"
 
 	"github.com/honzikec/archguard/internal/config"
+	"github.com/honzikec/archguard/internal/language"
+	"github.com/honzikec/archguard/internal/language/contracts"
 	"github.com/honzikec/archguard/internal/pathutil"
 )
 
 func Discover(project config.ProjectSettings) ([]string, error) {
+	resolved := language.Resolve(project.Roots)
+	return DiscoverWithAdapter(project, resolved.Adapter)
+}
+
+func DiscoverWithAdapter(project config.ProjectSettings, adapter contracts.Adapter) ([]string, error) {
+	if adapter == nil {
+		resolved := language.Resolve(project.Roots)
+		adapter = resolved.Adapter
+	}
 	seen := map[string]struct{}{}
 	files := make([]string, 0)
 
@@ -34,7 +45,7 @@ func Discover(project config.ProjectSettings) ([]string, error) {
 				}
 				return nil
 			}
-			if !isSupportedFile(normalized) {
+			if !adapter.SupportsFile(normalized) {
 				return nil
 			}
 
