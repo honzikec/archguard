@@ -13,8 +13,9 @@ import (
 )
 
 type Options struct {
-	MinSupport    int
-	MaxPrevalence float64
+	MinSupport           int
+	MaxPrevalence        float64
+	MaxCandidatesPerKind int
 }
 
 type Candidate struct {
@@ -36,12 +37,23 @@ func Propose(g *graph.Graph, allFiles []string, opts Options) []Candidate {
 	if opts.MaxPrevalence <= 0 {
 		opts.MaxPrevalence = 0.02
 	}
+	if opts.MaxCandidatesPerKind < 0 {
+		opts.MaxCandidatesPerKind = 0
+	}
+	if opts.MaxCandidatesPerKind == 0 {
+		opts.MaxCandidatesPerKind = 200
+	}
 
-	candidates := make([]Candidate, 0)
-	candidates = append(candidates, proposeNoImport(g, opts)...)
-	candidates = append(candidates, proposeNoPackage(g, opts)...)
-	candidates = append(candidates, proposeFilePattern(allFiles)...)
-	candidates = append(candidates, proposeNoCycle(g)...)
+	noImport := capCandidates(proposeNoImport(g, opts), opts.MaxCandidatesPerKind)
+	noPackage := capCandidates(proposeNoPackage(g, opts), opts.MaxCandidatesPerKind)
+	filePattern := capCandidates(proposeFilePattern(allFiles, opts), opts.MaxCandidatesPerKind)
+	noCycle := capCandidates(proposeNoCycle(g, opts), opts.MaxCandidatesPerKind)
+
+	candidates := make([]Candidate, 0, len(noImport)+len(noPackage)+len(filePattern)+len(noCycle))
+	candidates = append(candidates, noImport...)
+	candidates = append(candidates, noPackage...)
+	candidates = append(candidates, filePattern...)
+	candidates = append(candidates, noCycle...)
 
 	sort.Slice(candidates, func(i, j int) bool {
 		if candidates[i].Kind != candidates[j].Kind {
@@ -126,7 +138,7 @@ func proposeNoPackage(g *graph.Graph, opts Options) []Candidate {
 	return candidates
 }
 
-func proposeFilePattern(allFiles []string) []Candidate {
+func proposeFilePattern(allFiles []string, opts Options) []Candidate {
 	byDir := map[string][]string{}
 	for _, f := range allFiles {
 		dir := path.Dir(f)
@@ -135,7 +147,7 @@ func proposeFilePattern(allFiles []string) []Candidate {
 
 	candidates := make([]Candidate, 0)
 	for dir, files := range byDir {
-		if len(files) < 5 {
+		if len(files) < opts.MinSupport {
 			continue
 		}
 		suffixCount := map[string]int{}
@@ -176,7 +188,7 @@ func proposeFilePattern(allFiles []string) []Candidate {
 	return candidates
 }
 
-func proposeNoCycle(g *graph.Graph) []Candidate {
+func proposeNoCycle(g *graph.Graph, opts Options) []Candidate {
 	cycles := DetectCycles(g)
 	candidates := make([]Candidate, 0, len(cycles))
 	for _, c := range cycles {
@@ -184,11 +196,15 @@ func proposeNoCycle(g *graph.Graph) []Candidate {
 			continue
 		}
 		first := c.Chain[0]
+		support := g.Nodes[first]
+		if support < opts.MinSupport {
+			continue
+		}
 		candidates = append(candidates, Candidate{
 			Kind:       config.KindNoCycle,
 			Scope:      []string{first + "/**"},
 			Severity:   config.SeverityError,
-			Support:    len(c.Chain) - 1,
+			Support:    support,
 			Violations: 1,
 			Prevalence: 1.0,
 			Confidence: "HIGH",
@@ -196,6 +212,62 @@ func proposeNoCycle(g *graph.Graph) []Candidate {
 		})
 	}
 	return candidates
+}
+
+func capCandidates(candidates []Candidate, max int) []Candidate {
+	if max <= 0 || len(candidates) <= max {
+		return candidates
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		return betterCandidate(candidates[i], candidates[j])
+	})
+	return append([]Candidate{}, candidates[:max]...)
+}
+
+func betterCandidate(a, b Candidate) bool {
+	if rankConfidence(a.Confidence) != rankConfidence(b.Confidence) {
+		return rankConfidence(a.Confidence) > rankConfidence(b.Confidence)
+	}
+	if a.Support != b.Support {
+		return a.Support > b.Support
+	}
+	if a.Prevalence != b.Prevalence {
+		return a.Prevalence < b.Prevalence
+	}
+	if a.Violations != b.Violations {
+		return a.Violations < b.Violations
+	}
+	aScope, bScope := "", ""
+	if len(a.Scope) > 0 {
+		aScope = a.Scope[0]
+	}
+	if len(b.Scope) > 0 {
+		bScope = b.Scope[0]
+	}
+	if aScope != bScope {
+		return aScope < bScope
+	}
+	aTarget, bTarget := "", ""
+	if len(a.Target) > 0 {
+		aTarget = a.Target[0]
+	}
+	if len(b.Target) > 0 {
+		bTarget = b.Target[0]
+	}
+	return aTarget < bTarget
+}
+
+func rankConfidence(confidence string) int {
+	switch strings.ToUpper(strings.TrimSpace(confidence)) {
+	case "HIGH":
+		return 3
+	case "MEDIUM":
+		return 2
+	case "LOW":
+		return 1
+	default:
+		return 0
+	}
 }
 
 func confidence(prevalence float64, support int) string {

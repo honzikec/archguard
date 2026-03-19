@@ -24,7 +24,9 @@ func runMine(args []string) int {
 	common := bindCommonFlags(fs, commonFlags{configPath: "archguard.yaml", format: "text"})
 	minSupport := fs.Int("min-support", 20, "Minimum files per scope to propose candidate")
 	maxPrevalence := fs.Float64("max-prevalence", 0.02, "Maximum prevalence to consider as invariant")
+	maxCandidatesPerKind := fs.Int("max-candidates-per-kind", 200, "Maximum mined candidates per kind (0 = unlimited)")
 	emitConfig := fs.Bool("emit-config", false, "Emit a starter config from mined candidates")
+	emitNoCycleSeverity := fs.String("emit-no-cycle-severity", "warning", "Severity for emitted no_cycle rules: warning|error")
 	catalogMode := fs.String("catalog", "builtin", "Catalog mode: builtin|off")
 	catalogFormat := fs.String("catalog-format", "", "Catalog output format: text|json (default follows --format)")
 	adoptCatalog := fs.Bool("adopt-catalog", false, "Include adopted catalog rules when used with --emit-config")
@@ -54,6 +56,10 @@ func runMine(args []string) int {
 	}
 	if *adoptThreshold != "high" && *adoptThreshold != "medium" {
 		fmt.Fprintf(os.Stderr, "unsupported adopt-threshold: %s\n", *adoptThreshold)
+		return 2
+	}
+	if *emitNoCycleSeverity != "warning" && *emitNoCycleSeverity != "error" {
+		fmt.Fprintf(os.Stderr, "unsupported emit-no-cycle-severity: %s\n", *emitNoCycleSeverity)
 		return 2
 	}
 
@@ -101,8 +107,9 @@ func runMine(args []string) int {
 	frameworkResolution := framework.Resolve(cfg.Project.Framework, cfg.Project.Roots)
 	normalizedGraph, normalizedFiles, normalizationStats := framework.NormalizeMiningInputs(g, files, frameworkResolution.Selected)
 	candidates := miner.Propose(normalizedGraph, normalizedFiles, miner.Options{
-		MinSupport:    *minSupport,
-		MaxPrevalence: *maxPrevalence,
+		MinSupport:           *minSupport,
+		MaxPrevalence:        *maxPrevalence,
+		MaxCandidatesPerKind: *maxCandidatesPerKind,
 	})
 	catalogMatches := make([]miner.PatternMatch, 0)
 
@@ -156,7 +163,9 @@ func runMine(args []string) int {
 		if *adoptCatalog {
 			adopted = miner.AdoptCatalogMatches(catalogMatches, *adoptThreshold)
 		}
-		fmt.Print(miner.EmitStarterConfigWithCatalog(candidates, adopted))
+		fmt.Print(miner.EmitStarterConfigWithCatalog(candidates, adopted, miner.EmitOptions{
+			NoCycleSeverity: *emitNoCycleSeverity,
+		}))
 		return 0
 	}
 

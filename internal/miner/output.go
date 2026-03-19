@@ -14,6 +14,10 @@ type MineOutput struct {
 	CatalogMatches []PatternMatch `json:"catalog_matches,omitempty"`
 }
 
+type EmitOptions struct {
+	NoCycleSeverity string
+}
+
 type MineNormalizationStats struct {
 	OriginalNodes   int `json:"original_nodes"`
 	NormalizedNodes int `json:"normalized_nodes"`
@@ -101,7 +105,12 @@ func PrintMineJSON(candidates []Candidate, catalogMatches []PatternMatch, metada
 	fmt.Println(string(data))
 }
 
-func EmitStarterConfigWithCatalog(candidates []Candidate, adopted []config.Rule) string {
+func EmitStarterConfigWithCatalog(candidates []Candidate, adopted []config.Rule, opts EmitOptions) string {
+	noCycleSeverity := strings.ToLower(strings.TrimSpace(opts.NoCycleSeverity))
+	if noCycleSeverity != config.SeverityError && noCycleSeverity != config.SeverityWarning {
+		noCycleSeverity = config.SeverityWarning
+	}
+
 	var b strings.Builder
 	b.WriteString("version: 1\n")
 	b.WriteString("project:\n")
@@ -111,9 +120,13 @@ func EmitStarterConfigWithCatalog(candidates []Candidate, adopted []config.Rule)
 	b.WriteString("rules:\n")
 
 	for i, c := range candidates {
+		severity := c.Severity
+		if c.Kind == config.KindNoCycle {
+			severity = noCycleSeverity
+		}
 		b.WriteString(fmt.Sprintf("  - id: MINED-%03d\n", i+1))
 		b.WriteString(fmt.Sprintf("    kind: %s\n", c.Kind))
-		b.WriteString(fmt.Sprintf("    severity: %s\n", c.Severity))
+		b.WriteString(fmt.Sprintf("    severity: %s\n", severity))
 		b.WriteString("    scope:\n")
 		for _, s := range c.Scope {
 			b.WriteString(fmt.Sprintf("      - %q\n", s))

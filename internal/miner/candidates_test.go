@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/honzikec/archguard/internal/config"
 	"github.com/honzikec/archguard/internal/graph"
 	"github.com/honzikec/archguard/internal/miner"
 	"github.com/honzikec/archguard/internal/model"
@@ -49,5 +50,85 @@ func TestDetectCycles(t *testing.T) {
 	cycles := miner.DetectCycles(g)
 	if len(cycles) == 0 {
 		t.Fatal("expected a cycle")
+	}
+}
+
+func TestProposeAppliesMinSupportToFilePattern(t *testing.T) {
+	files := make([]string, 0, 6)
+	for i := 0; i < 6; i++ {
+		files = append(files, fmt.Sprintf("src/feature/f%d.ts", i))
+	}
+	g := graph.Build(nil, files)
+
+	candidates := miner.Propose(g, files, miner.Options{
+		MinSupport:    10,
+		MaxPrevalence: 1,
+	})
+	for _, c := range candidates {
+		if c.Kind == config.KindFilePattern {
+			t.Fatalf("expected no file_pattern candidate below min-support, got %+v", c)
+		}
+	}
+}
+
+func TestProposeAppliesMinSupportToNoCycle(t *testing.T) {
+	g := &graph.Graph{
+		Nodes: map[string]int{"src/a": 3, "src/b": 3, "src/c": 3},
+		Edges: map[string]map[string]int{
+			"src/a": {"src/b": 1},
+			"src/b": {"src/c": 1},
+			"src/c": {"src/a": 1},
+		},
+		PackageEdges: map[string]map[string]int{},
+		FileEdges:    map[string]map[string]struct{}{},
+	}
+	candidates := miner.Propose(g, nil, miner.Options{
+		MinSupport:    5,
+		MaxPrevalence: 1,
+	})
+	for _, c := range candidates {
+		if c.Kind == config.KindNoCycle {
+			t.Fatalf("expected no no_cycle candidate below min-support, got %+v", c)
+		}
+	}
+}
+
+func TestProposeCapsCandidatesPerKind(t *testing.T) {
+	files := make([]string, 0)
+	imports := make([]model.ImportRef, 0)
+	pkgs := []string{"axios", "lodash", "zod"}
+	dirs := []string{"src/a", "src/b", "src/c"}
+	for _, dir := range dirs {
+		for i := 0; i < 25; i++ {
+			file := fmt.Sprintf("%s/f%d.ts", dir, i)
+			files = append(files, file)
+			imports = append(imports, model.ImportRef{
+				SourceFile:      file,
+				RawImport:       pkgs[i%len(pkgs)],
+				IsPackageImport: true,
+			})
+		}
+	}
+	g := graph.Build(imports, files)
+	candidates := miner.Propose(g, files, miner.Options{
+		MinSupport:           1,
+		MaxPrevalence:        1,
+		MaxCandidatesPerKind: 2,
+	})
+
+	counts := map[string]int{}
+	for _, c := range candidates {
+		counts[c.Kind]++
+	}
+	for kind, count := range counts {
+		if count > 2 {
+			t.Fatalf("expected at most 2 candidates for kind %s, got %d", kind, count)
+		}
+	}
+	if counts[config.KindNoImport] != 2 {
+		t.Fatalf("expected capped no_import candidates to equal 2, got %d", counts[config.KindNoImport])
+	}
+	if counts[config.KindNoPackage] != 2 {
+		t.Fatalf("expected capped no_package candidates to equal 2, got %d", counts[config.KindNoPackage])
 	}
 }

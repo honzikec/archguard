@@ -1,12 +1,4 @@
-kind: file_pattern
-scope: [src/feature/**]
-target: [^.*\.ts$]
-severity: warning
-support: 10
-violations: 0
-prevalence: 0.0000
-confidence: HIGH
-evidence: 10/10 files in src/feature match suffix .ts
+No candidates discovered with current thresholds.
 ---
 Catalog matches:
 catalog_id: CAT-SERVICES-VIA-COMPOSITION-ROOT

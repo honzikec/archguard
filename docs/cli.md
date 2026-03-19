@@ -25,7 +25,9 @@ Flags:
 - `--debug`
 - `--min-support`
 - `--max-prevalence`
+- `--max-candidates-per-kind` (`0` = unlimited, default `200`)
 - `--emit-config`
+- `--emit-no-cycle-severity` (`warning|error`, default `warning`)
 - `--catalog` (`builtin|off`, default `builtin`)
 - `--catalog-format` (`text|json`)
 - `--show-low-confidence`
@@ -38,9 +40,12 @@ Output notes:
 - construction matches also include precision evidence (`resolved_examples`, `unresolved_reasons`, `sample_locations`)
 - text output stays concise by default; use `--debug` to print detailed catalog scoring/evidence
 - `--debug` also prints framework/language resolution and mining normalization stats
+- candidate generation applies `--min-support` consistently across `no_import`, `no_package`, `file_pattern`, and `no_cycle`
+- to keep large repos practical, mining caps candidates per kind by default (`--max-candidates-per-kind=200`)
 - mine resolves a framework profile (`generic|nextjs|react|react_router|react_native|angular`) and applies normalization only to mining inputs
 - check/mine resolve language adapter (`auto|javascript|php`) before discovery/parsing
 - With `--emit-config --adopt-catalog`, adopted catalog rules are appended to emitted config
+- emitted `no_cycle` rules default to `warning` unless overridden via `--emit-no-cycle-severity=error`
 
 ## `archguard explain`
 

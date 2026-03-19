@@ -42,6 +42,7 @@ Default check behavior:
 Mining note:
 - `mine` uses a framework-aware normalization layer (`generic|nextjs|react|react_router|react_native|angular`) and keeps `check` semantics generic.
 - language adapter selection is `project.language: auto|javascript|php` (default `auto`).
+- large repos are capped to `200` mined candidates per kind by default (`--max-candidates-per-kind=0` disables cap).
 
 ## Example config
 
