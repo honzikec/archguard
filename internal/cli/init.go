@@ -50,6 +50,7 @@ project:
     - "**/.next/**"
     - "**/coverage/**"
     - "**/.git/**"
+  framework: generic
   aliases: {}
 rules:
   - id: AG-NO-INFRA-IN-DOMAIN

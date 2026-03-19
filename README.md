@@ -38,6 +38,9 @@ Default check behavior:
 - Blocking threshold: `error`
 - Exit codes: `0` pass, `1` blocking violations, `2` runtime/config/usage error
 
+Mining note:
+- `mine` auto-detects Next.js via `next.config.*` and normalizes app-router route segments to reduce noisy candidate explosion.
+
 ## Example config
 
 ```yaml
@@ -46,6 +49,7 @@ project:
   roots: ["."]
   include: ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"]
   exclude: ["**/node_modules/**", "**/dist/**", "**/build/**", "**/.next/**", "**/coverage/**", "**/.git/**"]
+  framework: nextjs # optional; generic|nextjs
   aliases:
     "@/*": ["src/*"]
 
@@ -96,6 +100,7 @@ rules:
 - [Config](docs/config.md)
 - [Rules](docs/rules.md)
 - [CLI](docs/cli.md)
+- [Framework Layer](docs/frameworks.md)
 - [Pattern Catalog](docs/catalog.md)
 - [Catalog Sources](docs/catalog-sources.md)
 - [GitHub CI](docs/ci-github.md)

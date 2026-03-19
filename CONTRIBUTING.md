@@ -16,6 +16,7 @@ GOCACHE=/tmp/go-build go test ./...
 - Config schema is strict v1 (`version: 1`)
 - Output formats (`text`, `json`, `sarif`) should remain deterministic
 - Add tests for new parser/resolver/policy behavior
+- Framework-aware mining extensions should follow `docs/frameworks.md`
 
 ## Fixture expectations
 

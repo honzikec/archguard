@@ -7,11 +7,12 @@ type Config struct {
 }
 
 type ProjectSettings struct {
-	Roots    []string            `yaml:"roots,omitempty"`
-	Include  []string            `yaml:"include,omitempty"`
-	Exclude  []string            `yaml:"exclude,omitempty"`
-	Tsconfig string              `yaml:"tsconfig,omitempty"`
-	Aliases  map[string][]string `yaml:"aliases,omitempty"`
+	Roots     []string            `yaml:"roots,omitempty"`
+	Include   []string            `yaml:"include,omitempty"`
+	Exclude   []string            `yaml:"exclude,omitempty"`
+	Framework string              `yaml:"framework,omitempty"`
+	Tsconfig  string              `yaml:"tsconfig,omitempty"`
+	Aliases   map[string][]string `yaml:"aliases,omitempty"`
 }
 
 type Rule struct {

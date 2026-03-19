@@ -10,6 +10,7 @@ project:
   roots: ["."]
   include: ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"]
   exclude: ["**/node_modules/**", "**/dist/**", "**/build/**", "**/.next/**", "**/coverage/**", "**/.git/**"]
+  framework: generic|nextjs # optional; nextjs enables app-router-aware mining normalization
   tsconfig: "tsconfig.json" # optional
   aliases:
     "@/*": ["src/*"]

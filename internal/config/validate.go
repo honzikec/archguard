@@ -57,6 +57,13 @@ func Validate(cfg *Config) error {
 }
 
 func validateProject(project ProjectSettings) error {
+	if framework := strings.ToLower(strings.TrimSpace(project.Framework)); framework != "" {
+		switch framework {
+		case "generic", "nextjs":
+		default:
+			return fmt.Errorf("project.framework has unsupported value %q", project.Framework)
+		}
+	}
 	for _, root := range project.Roots {
 		if strings.TrimSpace(root) == "" {
 			return fmt.Errorf("project.roots contains empty path")

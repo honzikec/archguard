@@ -72,3 +72,23 @@ func TestValidatePatternRule(t *testing.T) {
 		t.Fatalf("expected pattern rule to validate, got error: %v", err)
 	}
 }
+
+func TestValidateProjectFramework(t *testing.T) {
+	valid := &config.Config{
+		Version: 1,
+		Project: config.ProjectSettings{Framework: "nextjs"},
+		Rules:   []config.Rule{},
+	}
+	if err := config.Validate(valid); err != nil {
+		t.Fatalf("expected nextjs framework to validate, got error: %v", err)
+	}
+
+	invalid := &config.Config{
+		Version: 1,
+		Project: config.ProjectSettings{Framework: "rails"},
+		Rules:   []config.Rule{},
+	}
+	if err := config.Validate(invalid); err == nil {
+		t.Fatal("expected unsupported framework validation error")
+	}
+}

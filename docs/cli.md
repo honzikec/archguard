@@ -37,6 +37,7 @@ Output notes:
 - `catalog_matches[]` includes scoring metrics (`scoped_files`, `eligible_files`, `violating_files`, `support`, `prevalence`, `score_components`)
 - construction matches also include precision evidence (`resolved_examples`, `unresolved_reasons`, `sample_locations`)
 - text output stays concise by default; use `--debug` to print detailed catalog scoring/evidence
+- mine auto-detects Next.js (`next.config.*`) and applies route-segment normalization; override with `project.framework`
 - With `--emit-config --adopt-catalog`, adopted catalog rules are appended to emitted config
 
 ## `archguard explain`

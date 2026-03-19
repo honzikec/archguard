@@ -4,6 +4,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/honzikec/archguard/internal/catalog"
 	"github.com/honzikec/archguard/internal/config"
@@ -89,7 +91,15 @@ func runMine(args []string) int {
 	}
 
 	g := graph.Build(imports, files)
-	candidates := miner.Propose(g, files, miner.Options{MinSupport: *minSupport, MaxPrevalence: *maxPrevalence})
+	framework := resolveMiningFramework(cfg.Project)
+	if common.debug && framework != "" {
+		fmt.Fprintf(os.Stderr, "mine framework profile: %s\n", framework)
+	}
+	candidates := miner.Propose(g, files, miner.Options{
+		MinSupport:    *minSupport,
+		MaxPrevalence: *maxPrevalence,
+		Framework:     framework,
+	})
 	catalogMatches := make([]miner.PatternMatch, 0)
 
 	if *catalogMode == "builtin" {
@@ -140,4 +150,50 @@ func loadConfigOptional(path string) (*config.Config, error) {
 		return nil, err
 	}
 	return config.Load(path)
+}
+
+func resolveMiningFramework(project config.ProjectSettings) string {
+	explicit := strings.ToLower(strings.TrimSpace(project.Framework))
+	switch explicit {
+	case "generic":
+		return ""
+	case "nextjs":
+		return "nextjs"
+	}
+
+	roots := project.Roots
+	if len(roots) == 0 {
+		roots = []string{"."}
+	}
+	if hasNextConfig(roots) {
+		return "nextjs"
+	}
+	return ""
+}
+
+func hasNextConfig(roots []string) bool {
+	configNames := []string{"next.config.js", "next.config.mjs", "next.config.ts", "next.config.cjs"}
+	for _, root := range roots {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			continue
+		}
+		searchPrefixes := []string{
+			root,
+			filepath.Join(root, "*"),
+			filepath.Join(root, "*", "*"),
+		}
+		for _, prefix := range searchPrefixes {
+			for _, name := range configNames {
+				matches, err := filepath.Glob(filepath.Join(prefix, name))
+				if err != nil {
+					continue
+				}
+				if len(matches) > 0 {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
