@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/honzikec/archguard/internal/framework"
+	"github.com/honzikec/archguard/internal/language"
 )
 
 func Validate(cfg *Config) error {
@@ -66,6 +67,15 @@ func validateProject(project ProjectSettings) error {
 		}
 		if _, ok := allowed[frameworkID]; !ok {
 			return fmt.Errorf("project.framework has unsupported value %q", project.Framework)
+		}
+	}
+	if languageID := strings.ToLower(strings.TrimSpace(project.Language)); languageID != "" && languageID != "auto" {
+		allowed := map[string]struct{}{}
+		for _, id := range language.RegisteredLanguages() {
+			allowed[id] = struct{}{}
+		}
+		if _, ok := allowed[languageID]; !ok {
+			return fmt.Errorf("project.language has unsupported value %q", project.Language)
 		}
 	}
 	for _, root := range project.Roots {

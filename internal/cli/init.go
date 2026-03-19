@@ -182,6 +182,7 @@ project:
     - "**/.next/**"
     - "**/coverage/**"
     - "**/.git/**"
+  language: auto
   framework: generic
   aliases: {}
 rules:

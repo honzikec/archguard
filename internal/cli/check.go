@@ -44,7 +44,7 @@ func runCheck(args []string) int {
 		return 2
 	}
 
-	languageResolution := language.Resolve(cfg.Project.Roots)
+	languageResolution := language.Resolve(cfg.Project.Language, cfg.Project.Roots)
 	if languageResolution.Adapter == nil {
 		fmt.Fprintf(os.Stderr, "failed to resolve language adapter\n")
 		return 2

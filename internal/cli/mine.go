@@ -63,7 +63,7 @@ func runMine(args []string) int {
 		return 2
 	}
 
-	languageResolution := language.Resolve(cfg.Project.Roots)
+	languageResolution := language.Resolve(cfg.Project.Language, cfg.Project.Roots)
 	if languageResolution.Adapter == nil {
 		fmt.Fprintln(os.Stderr, "failed to resolve language adapter")
 		return 2

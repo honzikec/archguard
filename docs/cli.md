@@ -37,8 +37,9 @@ Output notes:
 - `catalog_matches[]` includes scoring metrics (`scoped_files`, `eligible_files`, `violating_files`, `support`, `prevalence`, `score_components`)
 - construction matches also include precision evidence (`resolved_examples`, `unresolved_reasons`, `sample_locations`)
 - text output stays concise by default; use `--debug` to print detailed catalog scoring/evidence
-- `--debug` also prints framework profile resolution and mining normalization stats
+- `--debug` also prints framework/language resolution and mining normalization stats
 - mine resolves a framework profile (`generic|nextjs|react_router|react_native|angular`) and applies normalization only to mining inputs
+- check/mine resolve language adapter (`auto|javascript|php`) before discovery/parsing
 - With `--emit-config --adopt-catalog`, adopted catalog rules are appended to emitted config
 
 ## `archguard explain`

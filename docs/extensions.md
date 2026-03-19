@@ -22,6 +22,7 @@ Required changes:
 - register adapter in `internal/language/adapter.go`
 - keep parser/discovery behavior behind adapter boundary
 - add adapter tests and update `docs/languages.md`
+- update config validation/docs for `project.language` values when adding new adapter ids
 
 PR scope rule:
 - language adapter PRs should avoid framework profile changes unless strictly required

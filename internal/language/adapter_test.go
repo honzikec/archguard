@@ -13,12 +13,35 @@ func TestRegisteredLanguagesDeterministic(t *testing.T) {
 	if !reflect.DeepEqual(first, second) {
 		t.Fatalf("expected deterministic language list, got %v vs %v", first, second)
 	}
-	if len(first) == 0 {
-		t.Fatal("expected at least one language adapter")
+	if len(first) < 2 {
+		t.Fatalf("expected javascript and php adapters, got %+v", first)
 	}
 }
 
-func TestJavaScriptAdapterDeterministicParse(t *testing.T) {
+func TestResolveExplicitLanguage(t *testing.T) {
+	res := Resolve("php", nil)
+	if res.Selected != "php" || res.Reason != "explicit" || res.Adapter == nil {
+		t.Fatalf("expected explicit php adapter, got %+v", res)
+	}
+}
+
+func TestResolveAutoDetectsPHP(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "app", "index.php")
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte("<?php include './db.php';"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res := Resolve("", []string{dir})
+	if res.Selected != "php" || res.Reason != "auto_detected" {
+		t.Fatalf("expected php autodetection, got %+v", res)
+	}
+}
+
+func TestResolveJavaScriptAdapterDeterministicParse(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "sample.ts")
 	content := "import x from 'a'\nexport { y } from 'b'\n"
@@ -26,7 +49,7 @@ func TestJavaScriptAdapterDeterministicParse(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res := Resolve([]string{dir})
+	res := Resolve("javascript", []string{dir})
 	if res.Adapter == nil {
 		t.Fatal("expected resolved adapter")
 	}

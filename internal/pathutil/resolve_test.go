@@ -43,6 +43,28 @@ func TestResolveRelativeAndIndexAndAlias(t *testing.T) {
 	}
 }
 
+func TestResolvePHPRelativeImport(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "app", "controller.php"), `<?php require "./infra/db.php";`)
+	mustWrite(t, filepath.Join(dir, "app", "infra", "db.php"), `<?php`)
+
+	wd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(wd) }()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	resolver, err := pathutil.NewResolver(".", config.ProjectSettings{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, isPkg := resolver.Resolve("app/controller.php", "./infra/db.php")
+	if isPkg || resolved != "app/infra/db.php" {
+		t.Fatalf("unexpected php resolution: resolved=%s isPkg=%t", resolved, isPkg)
+	}
+}
+
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

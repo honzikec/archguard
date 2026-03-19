@@ -11,6 +11,7 @@ type ProjectSettings struct {
 	Include   []string            `yaml:"include,omitempty"`
 	Exclude   []string            `yaml:"exclude,omitempty"`
 	Framework string              `yaml:"framework,omitempty"`
+	Language  string              `yaml:"language,omitempty"`
 	Tsconfig  string              `yaml:"tsconfig,omitempty"`
 	Aliases   map[string][]string `yaml:"aliases,omitempty"`
 }

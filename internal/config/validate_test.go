@@ -95,3 +95,26 @@ func TestValidateProjectFramework(t *testing.T) {
 		t.Fatal("expected unsupported framework validation error")
 	}
 }
+
+func TestValidateProjectLanguage(t *testing.T) {
+	validLanguages := []string{"auto", "javascript", "php"}
+	for _, languageID := range validLanguages {
+		valid := &config.Config{
+			Version: 1,
+			Project: config.ProjectSettings{Language: languageID},
+			Rules:   []config.Rule{},
+		}
+		if err := config.Validate(valid); err != nil {
+			t.Fatalf("expected language %q to validate, got error: %v", languageID, err)
+		}
+	}
+
+	invalid := &config.Config{
+		Version: 1,
+		Project: config.ProjectSettings{Language: "python"},
+		Rules:   []config.Rule{},
+	}
+	if err := config.Validate(invalid); err == nil {
+		t.Fatal("expected unsupported language validation error")
+	}
+}

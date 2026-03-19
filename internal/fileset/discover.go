@@ -14,13 +14,13 @@ import (
 )
 
 func Discover(project config.ProjectSettings) ([]string, error) {
-	resolved := language.Resolve(project.Roots)
+	resolved := language.Resolve(project.Language, project.Roots)
 	return DiscoverWithAdapter(project, resolved.Adapter)
 }
 
 func DiscoverWithAdapter(project config.ProjectSettings, adapter contracts.Adapter) ([]string, error) {
 	if adapter == nil {
-		resolved := language.Resolve(project.Roots)
+		resolved := language.Resolve(project.Language, project.Roots)
 		adapter = resolved.Adapter
 	}
 	seen := map[string]struct{}{}

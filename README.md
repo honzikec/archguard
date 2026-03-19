@@ -1,6 +1,6 @@
 # ArchGuard v0.2
 
-ArchGuard is a deterministic architecture policy checker for TypeScript/JavaScript projects.
+ArchGuard is a deterministic architecture policy checker for TypeScript/JavaScript (and early PHP) projects.
 
 It enforces architectural boundaries (imports, packages, file patterns, and cycles) with CI-friendly output formats (`text`, `json`, `sarif`).
 
@@ -41,6 +41,7 @@ Default check behavior:
 
 Mining note:
 - `mine` uses a framework-aware normalization layer (`generic|nextjs|react_router|react_native|angular`) and keeps `check` semantics generic.
+- language adapter selection is `project.language: auto|javascript|php` (default `auto`).
 
 ## Example config
 
@@ -48,8 +49,9 @@ Mining note:
 version: 1
 project:
   roots: ["."]
-  include: ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"]
+  include: ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"] # add "**/*.php" for PHP repos
   exclude: ["**/node_modules/**", "**/dist/**", "**/build/**", "**/.next/**", "**/coverage/**", "**/.git/**"]
+  language: auto # auto|javascript|php
   framework: nextjs # optional; generic|nextjs|react_router|react_native|angular
   aliases:
     "@/*": ["src/*"]

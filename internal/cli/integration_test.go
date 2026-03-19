@@ -169,6 +169,18 @@ func TestCheckConstructionPolicyIgnoresUnresolvedDynamic(t *testing.T) {
 	}
 }
 
+func TestCheckPHPBoundaryViolation(t *testing.T) {
+	code, out, errOut := runCmdInDir(t, fixturePath("php_boundary_fail"), []string{
+		"check", "--config", "archguard.yaml", "--format", "json",
+	})
+	if code != 1 {
+		t.Fatalf("expected exit 1, got %d stderr=%s output=%s", code, errOut, out)
+	}
+	if !strings.Contains(out, "AG-PHP-NO-INFRA") {
+		t.Fatalf("expected php no_import finding, got: %s", out)
+	}
+}
+
 func TestMineCalibrationConfidenceScenarios(t *testing.T) {
 	type minePayload struct {
 		CatalogMatches []struct {

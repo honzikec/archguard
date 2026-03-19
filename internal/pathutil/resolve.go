@@ -35,7 +35,7 @@ func NewResolver(root string, project config.ProjectSettings) (*Resolver, error)
 	r := &Resolver{
 		root:       absRoot,
 		aliases:    map[string][]string{},
-		extensions: []string{".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"},
+		extensions: []string{".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".php"},
 	}
 
 	tsconfigPath, err := detectTSConfig(absRoot, project.Tsconfig)

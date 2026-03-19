@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/honzikec/archguard/internal/language/common"
 	"github.com/honzikec/archguard/internal/language/contracts"
 	"github.com/honzikec/archguard/internal/model"
 	"github.com/honzikec/archguard/internal/parser"
@@ -19,8 +20,14 @@ func (Adapter) ID() string {
 	return "javascript"
 }
 
-func (Adapter) Detect(_ []string) contracts.Detection {
-	return contracts.Detection{Matched: true, Reason: "default JavaScript/TypeScript adapter"}
+func (Adapter) Detect(roots []string) contracts.Detection {
+	if common.HasAnyFileNamed(roots, []string{"tsconfig.json", "jsconfig.json"}) {
+		return contracts.Detection{Matched: true, Reason: "tsconfig/jsconfig found"}
+	}
+	if common.HasFileWithSuffix(roots, []string{".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}, 8) {
+		return contracts.Detection{Matched: true, Reason: "js/ts files detected"}
+	}
+	return contracts.Detection{}
 }
 
 func (Adapter) SupportsFile(path string) bool {
