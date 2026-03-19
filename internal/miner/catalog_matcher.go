@@ -108,14 +108,11 @@ func matchPrevalenceBoundary(pattern catalog.Pattern, candidates []Candidate) []
 		}
 		sourceMatch := pathutil.MatchAny(sourceGlobs, c.Scope[0])
 		targetMatch := pathutil.MatchAny(targetGlobs, c.Target[0])
-		if !sourceMatch && !targetMatch {
+		if !sourceMatch || !targetMatch {
 			continue
 		}
 
-		structuralFit := 0.5
-		if sourceMatch && targetMatch {
-			structuralFit = 1.0
-		}
+		structuralFit := 1.0
 		effectiveSupport := effectiveMinSupport(minSupport, c.Support)
 		prevalenceSupport := prevalenceSupportScore(c.Prevalence, c.Support, maxPrevalence, effectiveSupport)
 		naming := namingScore(c.Scope[0], c.Target[0], sourceGlobs, targetGlobs)
@@ -158,14 +155,11 @@ func matchPrevalencePackageBoundary(pattern catalog.Pattern, candidates []Candid
 		}
 		sourceMatch := pathutil.MatchAny(sourceGlobs, c.Scope[0])
 		packageMatch := pathutil.MatchAny(packageGlobs, c.Target[0]) || containsExact(packageGlobs, c.Target[0])
-		if !sourceMatch && !packageMatch {
+		if !sourceMatch || !packageMatch {
 			continue
 		}
 
-		structuralFit := 0.5
-		if sourceMatch && packageMatch {
-			structuralFit = 1.0
-		}
+		structuralFit := 1.0
 		effectiveSupport := effectiveMinSupport(minSupport, c.Support)
 		prevalenceSupport := prevalenceSupportScore(c.Prevalence, c.Support, maxPrevalence, effectiveSupport)
 		naming := namingScore(c.Scope[0], c.Target[0], sourceGlobs, packageGlobs)
