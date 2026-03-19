@@ -40,7 +40,7 @@ Default check behavior:
 - Exit codes: `0` pass, `1` blocking violations, `2` runtime/config/usage error
 
 Mining note:
-- `mine` uses a framework-aware normalization layer (`generic|nextjs|react_router|react_native|angular`) and keeps `check` semantics generic.
+- `mine` uses a framework-aware normalization layer (`generic|nextjs|react|react_router|react_native|angular`) and keeps `check` semantics generic.
 - language adapter selection is `project.language: auto|javascript|php` (default `auto`).
 
 ## Example config
@@ -52,7 +52,7 @@ project:
   include: ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"] # add "**/*.php" for PHP repos
   exclude: ["**/node_modules/**", "**/dist/**", "**/build/**", "**/.next/**", "**/coverage/**", "**/.git/**"]
   language: auto # auto|javascript|php
-  framework: nextjs # optional; generic|nextjs|react_router|react_native|angular
+  framework: nextjs # optional; generic|nextjs|react|react_router|react_native|angular
   aliases:
     "@/*": ["src/*"]
 

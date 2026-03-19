@@ -20,6 +20,7 @@ ArchGuard keeps policy enforcement generic and applies optional framework-aware 
 
 Profile packages:
 - `internal/framework/profiles/nextjs`
+- `internal/framework/profiles/react`
 - `internal/framework/profiles/react_router`
 - `internal/framework/profiles/react_native`
 - `internal/framework/profiles/angular`
@@ -33,6 +34,10 @@ Shared helpers:
   - route groups `(x)` -> `(group)`
   - dynamic segments `[id]`/`[[...id]]` -> `[param]`
   - parallel routes `@slotName` -> `@slot`
+- `react`
+  - detects plain React projects when `react` is present without stronger framework markers
+  - normalizes ancillary segments (`__tests__` -> `tests`, `__mocks__` -> `mocks`)
+  - strips ancillary file suffixes (`.test`, `.spec`, `.stories`, `.story`)
 - `react_router`
   - route param segments `:id`/`$id` -> `[param]`
   - `_index` normalization

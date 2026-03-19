@@ -6,6 +6,7 @@ import (
 
 	"github.com/honzikec/archguard/internal/framework/profiles/angular"
 	"github.com/honzikec/archguard/internal/framework/profiles/nextjs"
+	"github.com/honzikec/archguard/internal/framework/profiles/react"
 	"github.com/honzikec/archguard/internal/framework/profiles/react_native"
 	"github.com/honzikec/archguard/internal/framework/profiles/react_router"
 )
@@ -13,6 +14,7 @@ import (
 func RegisteredProfiles() []Profile {
 	profiles := []Profile{
 		nextjs.New(),
+		react.New(),
 		react_router.New(),
 		react_native.New(),
 		angular.New(),

@@ -38,7 +38,7 @@ Output notes:
 - construction matches also include precision evidence (`resolved_examples`, `unresolved_reasons`, `sample_locations`)
 - text output stays concise by default; use `--debug` to print detailed catalog scoring/evidence
 - `--debug` also prints framework/language resolution and mining normalization stats
-- mine resolves a framework profile (`generic|nextjs|react_router|react_native|angular`) and applies normalization only to mining inputs
+- mine resolves a framework profile (`generic|nextjs|react|react_router|react_native|angular`) and applies normalization only to mining inputs
 - check/mine resolve language adapter (`auto|javascript|php`) before discovery/parsing
 - With `--emit-config --adopt-catalog`, adopted catalog rules are appended to emitted config
 

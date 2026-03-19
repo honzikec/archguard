@@ -74,7 +74,7 @@ func TestValidatePatternRule(t *testing.T) {
 }
 
 func TestValidateProjectFramework(t *testing.T) {
-	validFrameworks := []string{"generic", "nextjs", "react_router", "react_native", "angular"}
+	validFrameworks := []string{"generic", "nextjs", "react", "react_router", "react_native", "angular"}
 	for _, frameworkID := range validFrameworks {
 		valid := &config.Config{
 			Version: 1,

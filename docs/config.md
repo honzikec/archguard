@@ -11,7 +11,7 @@ project:
   include: ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"] # add "**/*.php" for PHP repos
   exclude: ["**/node_modules/**", "**/dist/**", "**/build/**", "**/.next/**", "**/coverage/**", "**/.git/**"]
   language: auto|javascript|php # optional; defaults to auto
-  framework: generic|nextjs|react_router|react_native|angular # optional; affects mining normalization only
+  framework: generic|nextjs|react|react_router|react_native|angular # optional; affects mining normalization only
   tsconfig: "tsconfig.json" # optional
   aliases:
     "@/*": ["src/*"]

@@ -13,6 +13,10 @@ func TestResolveFrameworkExplicit(t *testing.T) {
 	if res.Selected != "nextjs" || res.Reason != "explicit" {
 		t.Fatalf("expected explicit nextjs selection, got %+v", res)
 	}
+	res = framework.Resolve("react", nil)
+	if res.Selected != "react" || res.Reason != "explicit" {
+		t.Fatalf("expected explicit react selection, got %+v", res)
+	}
 
 	res = framework.Resolve("generic", nil)
 	if res.Selected != "" || res.Reason != "explicit_generic" {

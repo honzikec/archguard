@@ -20,6 +20,16 @@ func TestRegisteredFrameworksDeterministic(t *testing.T) {
 	if first[0] != "generic" {
 		t.Fatalf("expected generic as first framework, got %v", first)
 	}
+	foundReact := false
+	for _, id := range first {
+		if id == "react" {
+			foundReact = true
+			break
+		}
+	}
+	if !foundReact {
+		t.Fatalf("expected registered frameworks to include react, got %v", first)
+	}
 }
 
 func TestResolveAutodetectAmbiguous(t *testing.T) {
