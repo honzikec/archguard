@@ -1,0 +1,18 @@
+kind: file_pattern
+scope: [src/feature/**]
+target: [^.*\.ts$]
+severity: warning
+support: 10
+violations: 0
+prevalence: 0.0000
+confidence: HIGH
+evidence: 10/10 files in src/feature match suffix .ts
+---
+Catalog matches:
+catalog_id: CAT-SERVICES-VIA-COMPOSITION-ROOT
+name: Services are constructed in composition roots
+category: construction
+score: 0.490
+confidence: LOW
+evidence: 1/7 eligible files instantiate service classes (1 events, resolved=3 unresolved=4); examples: src/feature/controller.ts:4:new UserService
+proposed_rule_id: AG-CAT-SERVICES-VIA-COMPOSITION-ROOT-e8d6300f

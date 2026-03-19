@@ -127,7 +127,7 @@ func runMine(args []string) int {
 	case "json":
 		miner.PrintMineJSON(candidates, catalogMatches)
 	default:
-		miner.PrintMineText(candidates, catalogMatches, *catalogFormat)
+		miner.PrintMineText(candidates, catalogMatches, *catalogFormat, common.debug)
 	}
 	return 0
 }

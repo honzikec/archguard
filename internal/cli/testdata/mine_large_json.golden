@@ -1,0 +1,74 @@
+{
+  "candidates": [
+    {
+      "kind": "file_pattern",
+      "scope": [
+        "src/feature/**"
+      ],
+      "target": [
+        "^.*\\.ts$"
+      ],
+      "severity": "warning",
+      "support": 20,
+      "violations": 0,
+      "prevalence": 0,
+      "confidence": "HIGH",
+      "evidence": "20/20 files in src/feature match suffix .ts"
+    }
+  ],
+  "catalog_matches": [
+    {
+      "catalog_id": "CAT-SERVICES-VIA-COMPOSITION-ROOT",
+      "name": "Services are constructed in composition roots",
+      "category": "construction",
+      "score": 0.33,
+      "confidence": "LOW",
+      "evidence": "1/15 eligible files instantiate service classes (1 events, resolved=1 unresolved=14); examples: src/feature/controller.ts:4:new UserService",
+      "scoped_files": 21,
+      "eligible_files": 15,
+      "violating_files": 1,
+      "support": 15,
+      "prevalence": 0.06666666666666667,
+      "score_components": {
+        "structural_fit": 0.06666666666666667,
+        "prevalence_support": 0.4583333333333333,
+        "naming_fit": 0.6
+      },
+      "resolved_count": 1,
+      "unresolved_count": 14,
+      "sample_locations": [
+        "src/feature/controller.ts:4"
+      ],
+      "resolved_examples": [
+        "src/feature/controller.ts:4:new UserService"
+      ],
+      "unresolved_reasons": [
+        {
+          "reason": "symbol_not_resolved",
+          "count": 14
+        }
+      ],
+      "proposed_rule": {
+        "ID": "AG-CAT-SERVICES-VIA-COMPOSITION-ROOT-e8d6300f",
+        "Kind": "pattern",
+        "Severity": "warning",
+        "Scope": [
+          "src/**"
+        ],
+        "Target": [
+          "src/services/**"
+        ],
+        "Except": [
+          "src/bootstrap/**",
+          "src/di/**",
+          "src/main/**"
+        ],
+        "Template": "construction_policy",
+        "Params": {
+          "service_name_regex": ".*Service$"
+        },
+        "Message": "[derived_from_catalog=CAT-SERVICES-VIA-COMPOSITION-ROOT] Service classes should be instantiated in composition root/bootstrap files rather than across application code."
+      }
+    }
+  ]
+}

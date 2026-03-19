@@ -1,0 +1,21 @@
+version: 1
+project:
+  roots: ["."]
+  include: ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"]
+  exclude: ["**/node_modules/**", "**/dist/**", "**/build/**", "**/.next/**", "**/coverage/**", "**/.git/**"]
+rules:
+  - id: AG-CAT-SERVICES-VIA-COMPOSITION-ROOT-e8d6300f
+    kind: pattern
+    severity: warning
+    template: construction_policy
+    scope:
+      - "src/**"
+    target:
+      - "src/services/**"
+    except:
+      - "src/bootstrap/**"
+      - "src/di/**"
+      - "src/main/**"
+    params:
+      service_name_regex: ".*Service$"
+    message: "[derived_from_catalog=CAT-SERVICES-VIA-COMPOSITION-ROOT] Service classes should be instantiated in composition root/bootstrap files rather than across application code."

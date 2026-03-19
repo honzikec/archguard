@@ -1,0 +1,51 @@
+{
+  "candidates": [],
+  "catalog_matches": [
+    {
+      "catalog_id": "CAT-SERVICES-VIA-COMPOSITION-ROOT",
+      "name": "Services are constructed in composition roots",
+      "category": "construction",
+      "score": 0.77,
+      "confidence": "MEDIUM",
+      "evidence": "1/1 eligible files instantiate service classes (1 events, resolved=1 unresolved=0); examples: src/feature/controller.ts:4:new UserService",
+      "scoped_files": 4,
+      "eligible_files": 1,
+      "violating_files": 1,
+      "support": 1,
+      "prevalence": 1,
+      "score_components": {
+        "structural_fit": 1,
+        "prevalence_support": 0.625,
+        "naming_fit": 0.6
+      },
+      "resolved_count": 1,
+      "sample_locations": [
+        "src/feature/controller.ts:4"
+      ],
+      "resolved_examples": [
+        "src/feature/controller.ts:4:new UserService"
+      ],
+      "proposed_rule": {
+        "ID": "AG-CAT-SERVICES-VIA-COMPOSITION-ROOT-e8d6300f",
+        "Kind": "pattern",
+        "Severity": "warning",
+        "Scope": [
+          "src/**"
+        ],
+        "Target": [
+          "src/services/**"
+        ],
+        "Except": [
+          "src/bootstrap/**",
+          "src/di/**",
+          "src/main/**"
+        ],
+        "Template": "construction_policy",
+        "Params": {
+          "service_name_regex": ".*Service$"
+        },
+        "Message": "[derived_from_catalog=CAT-SERVICES-VIA-COMPOSITION-ROOT] Service classes should be instantiated in composition root/bootstrap files rather than across application code."
+      }
+    }
+  ]
+}

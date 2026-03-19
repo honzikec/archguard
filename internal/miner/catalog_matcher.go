@@ -15,17 +15,42 @@ import (
 	"github.com/honzikec/archguard/internal/resolve"
 )
 
+const (
+	defaultCatalogMinSupport     = 20
+	constructionMinScopedFloor   = 3
+	constructionPrevalenceTarget = 0.4
+)
+
 type PatternMatch struct {
-	CatalogID       string      `json:"catalog_id" yaml:"catalog_id"`
-	Name            string      `json:"name" yaml:"name"`
-	Category        string      `json:"category" yaml:"category"`
-	Score           float64     `json:"score" yaml:"score"`
-	Confidence      string      `json:"confidence" yaml:"confidence"`
-	Evidence        string      `json:"evidence" yaml:"evidence"`
-	ResolvedCount   int         `json:"resolved_count,omitempty" yaml:"resolved_count,omitempty"`
-	UnresolvedCount int         `json:"unresolved_count,omitempty" yaml:"unresolved_count,omitempty"`
-	SampleLocations []string    `json:"sample_locations,omitempty" yaml:"sample_locations,omitempty"`
-	ProposedRule    config.Rule `json:"proposed_rule" yaml:"proposed_rule"`
+	CatalogID         string         `json:"catalog_id" yaml:"catalog_id"`
+	Name              string         `json:"name" yaml:"name"`
+	Category          string         `json:"category" yaml:"category"`
+	Score             float64        `json:"score" yaml:"score"`
+	Confidence        string         `json:"confidence" yaml:"confidence"`
+	Evidence          string         `json:"evidence" yaml:"evidence"`
+	ScopedFiles       int            `json:"scoped_files" yaml:"scoped_files"`
+	EligibleFiles     int            `json:"eligible_files" yaml:"eligible_files"`
+	ViolatingFiles    int            `json:"violating_files" yaml:"violating_files"`
+	Support           int            `json:"support" yaml:"support"`
+	Prevalence        float64        `json:"prevalence" yaml:"prevalence"`
+	ScoreComponents   ScoreBreakdown `json:"score_components" yaml:"score_components"`
+	ResolvedCount     int            `json:"resolved_count,omitempty" yaml:"resolved_count,omitempty"`
+	UnresolvedCount   int            `json:"unresolved_count,omitempty" yaml:"unresolved_count,omitempty"`
+	SampleLocations   []string       `json:"sample_locations,omitempty" yaml:"sample_locations,omitempty"`
+	ResolvedExamples  []string       `json:"resolved_examples,omitempty" yaml:"resolved_examples,omitempty"`
+	UnresolvedReasons []ReasonCount  `json:"unresolved_reasons,omitempty" yaml:"unresolved_reasons,omitempty"`
+	ProposedRule      config.Rule    `json:"proposed_rule" yaml:"proposed_rule"`
+}
+
+type ScoreBreakdown struct {
+	StructuralFit     float64 `json:"structural_fit" yaml:"structural_fit"`
+	PrevalenceSupport float64 `json:"prevalence_support" yaml:"prevalence_support"`
+	NamingFit         float64 `json:"naming_fit" yaml:"naming_fit"`
+}
+
+type ReasonCount struct {
+	Reason string `json:"reason" yaml:"reason"`
+	Count  int    `json:"count" yaml:"count"`
 }
 
 type CatalogOptions struct {
@@ -91,18 +116,29 @@ func matchPrevalenceBoundary(pattern catalog.Pattern, candidates []Candidate) []
 		if sourceMatch && targetMatch {
 			structuralFit = 1.0
 		}
-		prevalenceSupport := prevalenceSupportScore(c.Prevalence, c.Support, maxPrevalence, minSupport)
+		effectiveSupport := effectiveMinSupport(minSupport, c.Support)
+		prevalenceSupport := prevalenceSupportScore(c.Prevalence, c.Support, maxPrevalence, effectiveSupport)
 		naming := namingScore(c.Scope[0], c.Target[0], sourceGlobs, targetGlobs)
 		score := weightedScore(structuralFit, prevalenceSupport, naming)
 
 		rule := catalogRuleFromCandidate(pattern, c, map[string]string{"relation": "imports"})
 		matches = append(matches, PatternMatch{
-			CatalogID:    pattern.ID,
-			Name:         pattern.Name,
-			Category:     pattern.Category,
-			Score:        score,
-			Confidence:   confidenceFromScore(score),
-			Evidence:     c.Evidence,
+			CatalogID:      pattern.ID,
+			Name:           pattern.Name,
+			Category:       pattern.Category,
+			Score:          score,
+			Confidence:     confidenceFromScore(score),
+			Evidence:       c.Evidence,
+			ScopedFiles:    c.Support,
+			EligibleFiles:  c.Support,
+			ViolatingFiles: c.Violations,
+			Support:        c.Support,
+			Prevalence:     c.Prevalence,
+			ScoreComponents: ScoreBreakdown{
+				StructuralFit:     structuralFit,
+				PrevalenceSupport: prevalenceSupport,
+				NamingFit:         naming,
+			},
 			ProposedRule: rule,
 		})
 	}
@@ -130,18 +166,29 @@ func matchPrevalencePackageBoundary(pattern catalog.Pattern, candidates []Candid
 		if sourceMatch && packageMatch {
 			structuralFit = 1.0
 		}
-		prevalenceSupport := prevalenceSupportScore(c.Prevalence, c.Support, maxPrevalence, minSupport)
+		effectiveSupport := effectiveMinSupport(minSupport, c.Support)
+		prevalenceSupport := prevalenceSupportScore(c.Prevalence, c.Support, maxPrevalence, effectiveSupport)
 		naming := namingScore(c.Scope[0], c.Target[0], sourceGlobs, packageGlobs)
 		score := weightedScore(structuralFit, prevalenceSupport, naming)
 
 		rule := catalogRuleFromCandidate(pattern, c, map[string]string{"relation": "packages"})
 		matches = append(matches, PatternMatch{
-			CatalogID:    pattern.ID,
-			Name:         pattern.Name,
-			Category:     pattern.Category,
-			Score:        score,
-			Confidence:   confidenceFromScore(score),
-			Evidence:     c.Evidence,
+			CatalogID:      pattern.ID,
+			Name:           pattern.Name,
+			Category:       pattern.Category,
+			Score:          score,
+			Confidence:     confidenceFromScore(score),
+			Evidence:       c.Evidence,
+			ScopedFiles:    c.Support,
+			EligibleFiles:  c.Support,
+			ViolatingFiles: c.Violations,
+			Support:        c.Support,
+			Prevalence:     c.Prevalence,
+			ScoreComponents: ScoreBreakdown{
+				StructuralFit:     structuralFit,
+				PrevalenceSupport: prevalenceSupport,
+				NamingFit:         naming,
+			},
 			ProposedRule: rule,
 		})
 	}
@@ -156,59 +203,85 @@ func matchConstructionPattern(pattern catalog.Pattern, files []string, project c
 	minSupport := toInt(pattern.Detection.Heuristic.Params["min_support"], 20)
 	serviceNamePattern := toString(pattern.Detection.Heuristic.Params["service_name_regex"], ".*Service$")
 
-	support := 0
-	violations := 0
+	scopedFiles := make([]string, 0)
+	for _, file := range files {
+		if pathutil.MatchAny(scopeGlobs, file) {
+			scopedFiles = append(scopedFiles, file)
+		}
+	}
+	sort.Strings(scopedFiles)
+	if len(scopedFiles) == 0 {
+		return PatternMatch{}, false, nil
+	}
+
+	eligibleFiles := map[string]struct{}{}
+	violatingFiles := map[string]struct{}{}
+	violationEvents := 0
 	resolvedCount := 0
 	unresolvedCount := 0
-	evidenceExamples := make([]string, 0, 3)
-	sampleLocations := make([]string, 0, 3)
+	resolvedExampleSet := map[string]struct{}{}
+	sampleLocationSet := map[string]struct{}{}
+	unresolvedByReason := map[string]int{}
 
 	constructions, err := resolve.ResolveConstructions(files, project, serviceGlobs, serviceNamePattern)
 	if err != nil {
 		return PatternMatch{}, false, err
 	}
-
-	for _, file := range files {
-		if !pathutil.MatchAny(scopeGlobs, file) {
-			continue
+	sort.Slice(constructions, func(i, j int) bool {
+		if constructions[i].FilePath != constructions[j].FilePath {
+			return constructions[i].FilePath < constructions[j].FilePath
 		}
-		support++
-	}
+		if constructions[i].Line != constructions[j].Line {
+			return constructions[i].Line < constructions[j].Line
+		}
+		if constructions[i].Column != constructions[j].Column {
+			return constructions[i].Column < constructions[j].Column
+		}
+		if constructions[i].ClassName != constructions[j].ClassName {
+			return constructions[i].ClassName < constructions[j].ClassName
+		}
+		return constructions[i].UnresolvedReason < constructions[j].UnresolvedReason
+	})
 
 	for _, c := range constructions {
 		if !pathutil.MatchAny(scopeGlobs, c.FilePath) {
 			continue
 		}
+		if pathutil.MatchAny(allowedNewGlobs, c.FilePath) {
+			continue
+		}
+		eligibleFiles[c.FilePath] = struct{}{}
 		if c.IsResolved {
 			resolvedCount++
 		} else {
 			unresolvedCount++
-		}
-		if pathutil.MatchAny(allowedNewGlobs, c.FilePath) {
-			continue
+			reason := strings.TrimSpace(c.UnresolvedReason)
+			if reason == "" {
+				reason = "unknown"
+			}
+			unresolvedByReason[reason]++
 		}
 		if !c.IsResolved || !c.IsService {
 			continue
 		}
-		violations++
-		if len(evidenceExamples) < 3 {
-			evidenceExamples = append(evidenceExamples, fmt.Sprintf("%s:new %s", c.FilePath, c.ClassName))
-		}
-		if len(sampleLocations) < 3 {
-			sampleLocations = append(sampleLocations, fmt.Sprintf("%s:%d", c.FilePath, c.Line))
-		}
+		violatingFiles[c.FilePath] = struct{}{}
+		violationEvents++
+		resolvedExampleSet[fmt.Sprintf("%s:%d:new %s", c.FilePath, c.Line, c.ClassName)] = struct{}{}
+		sampleLocationSet[fmt.Sprintf("%s:%d", c.FilePath, c.Line)] = struct{}{}
 	}
 
-	if support == 0 {
-		return PatternMatch{}, false, nil
+	support := len(eligibleFiles)
+	violatingFileCount := len(violatingFiles)
+	prevalence := 0.0
+	if support > 0 {
+		prevalence = float64(violatingFileCount) / float64(support)
 	}
-
-	prevalence := float64(violations) / float64(support)
 	structuralFit := 0.5
 	if resolvedCount > 0 {
 		structuralFit = clamp(float64(resolvedCount)/float64(resolvedCount+unresolvedCount), 0, 1)
 	}
-	prevalenceSupport := prevalenceSupportScore(prevalence, support, maxPrevalence, minSupport)
+	effectiveSupport := effectiveMinSupport(minSupport, len(scopedFiles))
+	prevalenceSupport := constructionPrevalenceSupportScore(prevalence, support, maxPrevalence, effectiveSupport)
 	naming := 0.6
 	if unresolvedCount > 0 && resolvedCount == 0 {
 		naming = 0.3
@@ -216,9 +289,14 @@ func matchConstructionPattern(pattern catalog.Pattern, files []string, project c
 	score := weightedScore(structuralFit, prevalenceSupport, naming)
 	confidence := confidenceFromScore(score)
 
-	evidence := fmt.Sprintf("%d/%d scoped files instantiate service classes (resolved=%d unresolved=%d)", violations, support, resolvedCount, unresolvedCount)
-	if len(evidenceExamples) > 0 {
-		evidence = evidence + "; examples: " + strings.Join(evidenceExamples, ", ")
+	resolvedExamples := sortedLimitedKeys(resolvedExampleSet, 3)
+	sampleLocations := sortedLimitedKeys(sampleLocationSet, 3)
+	unresolvedReasons := sortedReasonCounts(unresolvedByReason)
+
+	evidence := fmt.Sprintf("%d/%d eligible files instantiate service classes (%d events, resolved=%d unresolved=%d)",
+		violatingFileCount, support, violationEvents, resolvedCount, unresolvedCount)
+	if len(resolvedExamples) > 0 {
+		evidence = evidence + "; examples: " + strings.Join(resolvedExamples, ", ")
 	}
 
 	ruleHash := shortHash(strings.Join(scopeGlobs, ",") + "|" + strings.Join(serviceGlobs, ",") + "|" + strings.Join(allowedNewGlobs, ","))
@@ -237,16 +315,24 @@ func matchConstructionPattern(pattern catalog.Pattern, files []string, project c
 	}
 
 	return PatternMatch{
-		CatalogID:       pattern.ID,
-		Name:            pattern.Name,
-		Category:        pattern.Category,
-		Score:           score,
-		Confidence:      confidence,
-		Evidence:        evidence,
-		ResolvedCount:   resolvedCount,
-		UnresolvedCount: unresolvedCount,
-		SampleLocations: sampleLocations,
-		ProposedRule:    rule,
+		CatalogID:         pattern.ID,
+		Name:              pattern.Name,
+		Category:          pattern.Category,
+		Score:             score,
+		Confidence:        confidence,
+		Evidence:          evidence,
+		ScopedFiles:       len(scopedFiles),
+		EligibleFiles:     support,
+		ViolatingFiles:    violatingFileCount,
+		Support:           support,
+		Prevalence:        prevalence,
+		ScoreComponents:   ScoreBreakdown{StructuralFit: structuralFit, PrevalenceSupport: prevalenceSupport, NamingFit: naming},
+		ResolvedCount:     resolvedCount,
+		UnresolvedCount:   unresolvedCount,
+		SampleLocations:   sampleLocations,
+		ResolvedExamples:  resolvedExamples,
+		UnresolvedReasons: unresolvedReasons,
+		ProposedRule:      rule,
 	}, true, nil
 }
 
@@ -323,6 +409,30 @@ func prevalenceSupportScore(prevalence float64, support int, maxPrevalence float
 		}
 	}
 	return (supportScore + prevalenceScore) / 2.0
+}
+
+func constructionPrevalenceSupportScore(prevalence float64, support int, _ float64, minSupport int) float64 {
+	supportScore := 0.0
+	if minSupport > 0 {
+		supportScore = clamp(float64(support)/float64(minSupport), 0, 1)
+	}
+	// Construction-policy recommendations become more useful as direct construction prevalence increases.
+	prevalenceScore := clamp(prevalence/constructionPrevalenceTarget, 0, 1)
+	return (supportScore + prevalenceScore) / 2.0
+}
+
+func effectiveMinSupport(configuredMinSupport int, scopedFiles int) int {
+	if configuredMinSupport <= 0 {
+		configuredMinSupport = defaultCatalogMinSupport
+	}
+	scopedFloor := scopedFiles
+	if scopedFloor < constructionMinScopedFloor {
+		scopedFloor = constructionMinScopedFloor
+	}
+	if configuredMinSupport < scopedFloor {
+		return configuredMinSupport
+	}
+	return scopedFloor
 }
 
 func namingScore(scope, target string, sourceGlobs, targetGlobs []string) float64 {
@@ -474,6 +584,38 @@ func containsExact(items []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func sortedLimitedKeys(values map[string]struct{}, limit int) []string {
+	if len(values) == 0 || limit <= 0 {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	for value := range values {
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
+func sortedReasonCounts(reasonMap map[string]int) []ReasonCount {
+	if len(reasonMap) == 0 {
+		return nil
+	}
+	out := make([]ReasonCount, 0, len(reasonMap))
+	for reason, count := range reasonMap {
+		out = append(out, ReasonCount{Reason: reason, Count: count})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		return out[i].Reason < out[j].Reason
+	})
+	return out
 }
 
 func sanitizeCatalogID(id string) string {

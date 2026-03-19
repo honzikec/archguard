@@ -14,7 +14,7 @@ type MineOutput struct {
 	CatalogMatches []PatternMatch `json:"catalog_matches,omitempty"`
 }
 
-func PrintMineText(candidates []Candidate, catalogMatches []PatternMatch, catalogFormat string) {
+func PrintMineText(candidates []Candidate, catalogMatches []PatternMatch, catalogFormat string, debug bool) {
 	PrintText(candidates)
 	if len(catalogMatches) == 0 {
 		return
@@ -36,14 +36,30 @@ func PrintMineText(candidates []Candidate, catalogMatches []PatternMatch, catalo
 		fmt.Printf("score: %.3f\n", m.Score)
 		fmt.Printf("confidence: %s\n", m.Confidence)
 		fmt.Printf("evidence: %s\n", m.Evidence)
+		fmt.Printf("proposed_rule_id: %s\n", m.ProposedRule.ID)
+		if !debug {
+			continue
+		}
+		fmt.Printf("scoped_files: %d\n", m.ScopedFiles)
+		fmt.Printf("eligible_files: %d\n", m.EligibleFiles)
+		fmt.Printf("violating_files: %d\n", m.ViolatingFiles)
+		fmt.Printf("support: %d\n", m.Support)
+		fmt.Printf("prevalence: %.4f\n", m.Prevalence)
+		fmt.Printf("score_components: structural_fit=%.3f prevalence_support=%.3f naming_fit=%.3f\n",
+			m.ScoreComponents.StructuralFit, m.ScoreComponents.PrevalenceSupport, m.ScoreComponents.NamingFit)
 		if m.ResolvedCount > 0 || m.UnresolvedCount > 0 {
 			fmt.Printf("resolved_count: %d\n", m.ResolvedCount)
 			fmt.Printf("unresolved_count: %d\n", m.UnresolvedCount)
 		}
+		if len(m.ResolvedExamples) > 0 {
+			fmt.Printf("resolved_examples: %v\n", m.ResolvedExamples)
+		}
 		if len(m.SampleLocations) > 0 {
 			fmt.Printf("sample_locations: %v\n", m.SampleLocations)
 		}
-		fmt.Printf("proposed_rule_id: %s\n", m.ProposedRule.ID)
+		if len(m.UnresolvedReasons) > 0 {
+			fmt.Printf("unresolved_reasons: %v\n", m.UnresolvedReasons)
+		}
 	}
 }
 
