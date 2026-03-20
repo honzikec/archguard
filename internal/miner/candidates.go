@@ -189,29 +189,58 @@ func proposeFilePattern(allFiles []string, opts Options) []Candidate {
 }
 
 func proposeNoCycle(g *graph.Graph, opts Options) []Candidate {
-	cycles := DetectCycles(g)
-	candidates := make([]Candidate, 0, len(cycles))
-	for _, c := range cycles {
-		if len(c.Chain) == 0 {
+	components := DetectCycleComponents(g)
+	candidates := make([]Candidate, 0, len(components))
+	for _, component := range components {
+		if len(component.Nodes) == 0 {
 			continue
 		}
-		first := c.Chain[0]
-		support := g.Nodes[first]
+		support := 0
+		for _, node := range component.Nodes {
+			support += g.Nodes[node]
+		}
 		if support < opts.MinSupport {
 			continue
 		}
+		scopeRoot := componentScopeRoot(component.Nodes)
+		if scopeRoot == "" || scopeRoot == "." {
+			scopeRoot = component.Nodes[0]
+		}
 		candidates = append(candidates, Candidate{
 			Kind:       config.KindNoCycle,
-			Scope:      []string{first + "/**"},
+			Scope:      []string{scopeRoot + "/**"},
 			Severity:   config.SeverityError,
 			Support:    support,
-			Violations: 1,
+			Violations: len(component.Nodes),
 			Prevalence: 1.0,
 			Confidence: "HIGH",
-			Evidence:   strings.Join(c.Chain, " -> "),
+			Evidence:   fmt.Sprintf("cycle component (%d subtrees): %s", len(component.Nodes), strings.Join(component.Nodes, " <-> ")),
 		})
 	}
 	return candidates
+}
+
+func componentScopeRoot(nodes []string) string {
+	if len(nodes) == 0 {
+		return ""
+	}
+	common := strings.Split(nodes[0], "/")
+	for _, node := range nodes[1:] {
+		parts := strings.Split(node, "/")
+		n := len(common)
+		if len(parts) < n {
+			n = len(parts)
+		}
+		i := 0
+		for i < n && common[i] == parts[i] {
+			i++
+		}
+		common = common[:i]
+		if len(common) == 0 {
+			return ""
+		}
+	}
+	return strings.Join(common, "/")
 }
 
 func capCandidates(candidates []Candidate, max int) []Candidate {

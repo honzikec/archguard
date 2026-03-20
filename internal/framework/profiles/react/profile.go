@@ -31,10 +31,10 @@ func (Profile) Detect(roots []string) contracts.Detection {
 		return contracts.Detection{}
 	}
 	if common.HasAnyDirectory(roots, []string{"src"}) {
-		return contracts.Detection{Matched: true, Reason: "react dependency with src directory", Score: 25}
+		return contracts.Detection{Matched: true, Reason: "react dependency with src directory", Score: 30}
 	}
 	if common.HasFileWithSuffix(roots, []string{".jsx", ".tsx"}, 8) {
-		return contracts.Detection{Matched: true, Reason: "react dependency with jsx/tsx files", Score: 20}
+		return contracts.Detection{Matched: true, Reason: "react dependency with jsx/tsx files", Score: 30}
 	}
 	return contracts.Detection{}
 }

@@ -11,6 +11,8 @@ import (
 	"github.com/honzikec/archguard/internal/framework/profiles/react_router"
 )
 
+const minAutoSelectScore = 30
+
 func RegisteredProfiles() []Profile {
 	profiles := []Profile{
 		nextjs.New(),
@@ -102,12 +104,18 @@ func Resolve(explicitFramework string, roots []string) Resolution {
 	case 0:
 		resolution.Reason = "auto_none"
 	case 1:
-		resolution.Selected = matched[0]
-		resolution.Reason = "auto_detected"
+		if bestScore >= minAutoSelectScore {
+			resolution.Selected = matched[0]
+			resolution.Reason = "auto_detected"
+		} else {
+			resolution.Reason = "auto_weak"
+		}
 	default:
-		if !tiedBest && bestID != "" {
+		if !tiedBest && bestID != "" && bestScore >= minAutoSelectScore {
 			resolution.Selected = bestID
 			resolution.Reason = "auto_ranked"
+		} else if !tiedBest && bestID != "" {
+			resolution.Reason = "auto_weak"
 		} else {
 			resolution.Reason = "auto_ambiguous"
 		}

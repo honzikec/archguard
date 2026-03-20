@@ -53,6 +53,26 @@ func TestDetectCycles(t *testing.T) {
 	}
 }
 
+func TestDetectCycleComponentsCollapsesEquivalentCycles(t *testing.T) {
+	g := &graph.Graph{
+		Nodes: map[string]int{"src/a": 5, "src/b": 5, "src/c": 5},
+		Edges: map[string]map[string]int{
+			"src/a": {"src/b": 1, "src/c": 1},
+			"src/b": {"src/c": 1, "src/a": 1},
+			"src/c": {"src/a": 1, "src/b": 1},
+		},
+		PackageEdges: map[string]map[string]int{},
+		FileEdges:    map[string]map[string]struct{}{},
+	}
+	components := miner.DetectCycleComponents(g)
+	if len(components) != 1 {
+		t.Fatalf("expected one cycle component, got %+v", components)
+	}
+	if len(components[0].Nodes) != 3 {
+		t.Fatalf("expected 3 nodes in component, got %+v", components[0])
+	}
+}
+
 func TestProposeAppliesMinSupportToFilePattern(t *testing.T) {
 	files := make([]string, 0, 6)
 	for i := 0; i < 6; i++ {
@@ -83,13 +103,45 @@ func TestProposeAppliesMinSupportToNoCycle(t *testing.T) {
 		FileEdges:    map[string]map[string]struct{}{},
 	}
 	candidates := miner.Propose(g, nil, miner.Options{
-		MinSupport:    5,
+		MinSupport:    10,
 		MaxPrevalence: 1,
 	})
 	for _, c := range candidates {
 		if c.Kind == config.KindNoCycle {
 			t.Fatalf("expected no no_cycle candidate below min-support, got %+v", c)
 		}
+	}
+}
+
+func TestProposeNoCycleUsesComponentCandidates(t *testing.T) {
+	g := &graph.Graph{
+		Nodes: map[string]int{"src/a": 5, "src/b": 5, "src/c": 5},
+		Edges: map[string]map[string]int{
+			"src/a": {"src/b": 1},
+			"src/b": {"src/c": 1},
+			"src/c": {"src/a": 1},
+		},
+		PackageEdges: map[string]map[string]int{},
+		FileEdges:    map[string]map[string]struct{}{},
+	}
+	candidates := miner.Propose(g, nil, miner.Options{
+		MinSupport:    1,
+		MaxPrevalence: 1,
+	})
+	found := make([]miner.Candidate, 0)
+	for _, c := range candidates {
+		if c.Kind == config.KindNoCycle {
+			found = append(found, c)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("expected exactly one no_cycle candidate per SCC, got %+v", found)
+	}
+	if found[0].Support != 15 {
+		t.Fatalf("expected component support sum 15, got %+v", found[0])
+	}
+	if found[0].Violations != 3 {
+		t.Fatalf("expected violations to equal component size, got %+v", found[0])
 	}
 }
 

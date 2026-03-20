@@ -73,3 +73,22 @@ func TestResolveAutodetectRankedSelectsUniqueStrongest(t *testing.T) {
 		t.Fatalf("expected auto_ranked reason, got %+v", res)
 	}
 }
+
+func TestResolveAutodetectWeakSignalFallsBackToGeneric(t *testing.T) {
+	dir := t.TempDir()
+	// Dependency-only nextjs signal is too weak for auto-selection.
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"dependencies":{"next":"15.0.0"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res := Resolve("", []string{dir})
+	if res.Selected != "" {
+		t.Fatalf("expected weak signal fallback to generic, got %+v", res)
+	}
+	if res.Reason != "auto_weak" {
+		t.Fatalf("expected auto_weak reason, got %+v", res)
+	}
+	if len(res.Matched) != 1 || res.Matched[0] != "nextjs" {
+		t.Fatalf("expected matched to include nextjs weak signal, got %+v", res)
+	}
+}
