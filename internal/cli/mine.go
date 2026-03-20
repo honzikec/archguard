@@ -16,6 +16,7 @@ import (
 	"github.com/honzikec/archguard/internal/miner"
 	"github.com/honzikec/archguard/internal/model"
 	"github.com/honzikec/archguard/internal/pathutil"
+	"github.com/honzikec/archguard/internal/workspace"
 )
 
 func runMine(args []string) int {
@@ -27,6 +28,7 @@ func runMine(args []string) int {
 	maxCandidatesPerKind := fs.Int("max-candidates-per-kind", 200, "Maximum mined candidates per kind (0 = unlimited)")
 	emitConfig := fs.Bool("emit-config", false, "Emit a starter config from mined candidates")
 	emitNoCycleSeverity := fs.String("emit-no-cycle-severity", "warning", "Severity for emitted no_cycle rules: warning|error")
+	workspaceMode := fs.String("workspace-mode", "auto", "Workspace mining mode: auto|off")
 	catalogMode := fs.String("catalog", "builtin", "Catalog mode: builtin|off")
 	catalogFormat := fs.String("catalog-format", "", "Catalog output format: text|json (default follows --format)")
 	adoptCatalog := fs.Bool("adopt-catalog", false, "Include adopted catalog rules when used with --emit-config")
@@ -60,6 +62,10 @@ func runMine(args []string) int {
 	}
 	if *emitNoCycleSeverity != "warning" && *emitNoCycleSeverity != "error" {
 		fmt.Fprintf(os.Stderr, "unsupported emit-no-cycle-severity: %s\n", *emitNoCycleSeverity)
+		return 2
+	}
+	if *workspaceMode != "auto" && *workspaceMode != "off" {
+		fmt.Fprintf(os.Stderr, "unsupported workspace-mode: %s\n", *workspaceMode)
 		return 2
 	}
 
@@ -103,14 +109,56 @@ func runMine(args []string) int {
 		imports = append(imports, parsed...)
 	}
 
-	g := graph.Build(imports, files)
-	frameworkResolution := framework.Resolve(cfg.Project.Framework, cfg.Project.Roots)
-	normalizedGraph, normalizedFiles, normalizationStats := framework.NormalizeMiningInputs(g, files, frameworkResolution.Selected)
-	candidates := miner.Propose(normalizedGraph, normalizedFiles, miner.Options{
-		MinSupport:           *minSupport,
-		MaxPrevalence:        *maxPrevalence,
-		MaxCandidatesPerKind: *maxCandidatesPerKind,
-	})
+	workspaceRoots := append([]string{}, cfg.Project.Roots...)
+	workspaceReason := "off"
+	if *workspaceMode == "auto" {
+		discovered, err := workspace.DiscoverRoots(cfg.Project.Roots)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to discover workspaces: %v\n", err)
+			return 2
+		}
+		if len(discovered) > 0 {
+			workspaceRoots = discovered
+		}
+		if len(workspaceRoots) > 1 {
+			workspaceReason = "auto_workspaces"
+		} else {
+			workspaceReason = "auto_single"
+		}
+	}
+	if len(workspaceRoots) == 0 {
+		workspaceRoots = []string{"."}
+	}
+
+	rootFrameworkResolution := framework.Resolve(cfg.Project.Framework, cfg.Project.Roots)
+	frameworkResolution := rootFrameworkResolution
+	candidateBuckets := make([]miner.Candidate, 0)
+	totalNormalization := miner.MineNormalizationStats{}
+
+	for _, wsRoot := range workspaceRoots {
+		wsFiles := filterFilesByWorkspace(files, wsRoot)
+		if len(wsFiles) == 0 {
+			continue
+		}
+		wsImports := filterImportsByWorkspace(imports, wsRoot)
+		wsGraph := graph.Build(wsImports, wsFiles)
+		wsFramework := framework.Resolve(cfg.Project.Framework, []string{wsRoot})
+		if len(workspaceRoots) == 1 {
+			frameworkResolution = wsFramework
+		}
+		normalizedGraph, normalizedFiles, stats := framework.NormalizeMiningInputs(wsGraph, wsFiles, wsFramework.Selected)
+		wsCandidates := miner.Propose(normalizedGraph, normalizedFiles, miner.Options{
+			MinSupport:           *minSupport,
+			MaxPrevalence:        *maxPrevalence,
+			MaxCandidatesPerKind: *maxCandidatesPerKind,
+		})
+		candidateBuckets = append(candidateBuckets, wsCandidates...)
+		totalNormalization.OriginalNodes += stats.OriginalNodes
+		totalNormalization.NormalizedNodes += stats.NormalizedNodes
+		totalNormalization.OriginalFiles += stats.OriginalFiles
+		totalNormalization.NormalizedFiles += stats.NormalizedFiles
+	}
+	candidates := dedupeCandidates(candidateBuckets, *maxCandidatesPerKind)
 	catalogMatches := make([]miner.PatternMatch, 0)
 
 	if *catalogMode == "builtin" {
@@ -135,10 +183,10 @@ func runMine(args []string) int {
 		LanguageAdapter:  languageResolution.Selected,
 		LanguageReason:   languageResolution.Reason,
 		Normalization: miner.MineNormalizationStats{
-			OriginalNodes:   normalizationStats.OriginalNodes,
-			NormalizedNodes: normalizationStats.NormalizedNodes,
-			OriginalFiles:   normalizationStats.OriginalFiles,
-			NormalizedFiles: normalizationStats.NormalizedFiles,
+			OriginalNodes:   totalNormalization.OriginalNodes,
+			NormalizedNodes: totalNormalization.NormalizedNodes,
+			OriginalFiles:   totalNormalization.OriginalFiles,
+			NormalizedFiles: totalNormalization.NormalizedFiles,
 		},
 	}
 
@@ -150,6 +198,7 @@ func runMine(args []string) int {
 			fmt.Fprintf(os.Stderr, "mine framework matches: %s\n", strings.Join(sorted, ", "))
 		}
 		fmt.Fprintf(os.Stderr, "mine language adapter: %s (%s)\n", metadata.LanguageAdapter, metadata.LanguageReason)
+		fmt.Fprintf(os.Stderr, "mine workspaces: %d (%s)\n", len(workspaceRoots), workspaceReason)
 		fmt.Fprintf(os.Stderr, "mine normalization: nodes %d->%d files %d->%d\n",
 			metadata.Normalization.OriginalNodes,
 			metadata.Normalization.NormalizedNodes,
@@ -183,6 +232,118 @@ func runMine(args []string) int {
 		miner.PrintMineText(candidates, catalogMatches, *catalogFormat, common.debug, metadata)
 	}
 	return 0
+}
+
+func filterFilesByWorkspace(files []string, wsRoot string) []string {
+	wsRoot = strings.TrimSuffix(pathutil.Normalize(strings.TrimSpace(wsRoot)), "/")
+	if wsRoot == "" || wsRoot == "." {
+		return append([]string{}, files...)
+	}
+	prefix := wsRoot + "/"
+	out := make([]string, 0)
+	for _, f := range files {
+		if strings.HasPrefix(pathutil.Normalize(f), prefix) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+func filterImportsByWorkspace(imports []model.ImportRef, wsRoot string) []model.ImportRef {
+	wsRoot = strings.TrimSuffix(pathutil.Normalize(strings.TrimSpace(wsRoot)), "/")
+	if wsRoot == "" || wsRoot == "." {
+		return append([]model.ImportRef{}, imports...)
+	}
+	prefix := wsRoot + "/"
+	out := make([]model.ImportRef, 0)
+	for _, imp := range imports {
+		if strings.HasPrefix(pathutil.Normalize(imp.SourceFile), prefix) {
+			out = append(out, imp)
+		}
+	}
+	return out
+}
+
+func dedupeCandidates(in []miner.Candidate, maxPerKind int) []miner.Candidate {
+	type entry struct {
+		candidate miner.Candidate
+	}
+	seen := map[string]entry{}
+	for _, c := range in {
+		key := strings.Join([]string{
+			c.Kind,
+			strings.Join(c.Scope, ","),
+			strings.Join(c.Target, ","),
+			c.Severity,
+		}, "|")
+		current, ok := seen[key]
+		if !ok || c.Support > current.candidate.Support {
+			seen[key] = entry{candidate: c}
+		}
+	}
+	merged := make([]miner.Candidate, 0, len(seen))
+	for _, e := range seen {
+		merged = append(merged, e.candidate)
+	}
+
+	grouped := map[string][]miner.Candidate{}
+	for _, c := range merged {
+		grouped[c.Kind] = append(grouped[c.Kind], c)
+	}
+
+	out := make([]miner.Candidate, 0, len(merged))
+	for kind := range grouped {
+		candidates := grouped[kind]
+		sort.Slice(candidates, func(i, j int) bool {
+			if confidenceRank(candidates[i].Confidence) != confidenceRank(candidates[j].Confidence) {
+				return confidenceRank(candidates[i].Confidence) > confidenceRank(candidates[j].Confidence)
+			}
+			if candidates[i].Support != candidates[j].Support {
+				return candidates[i].Support > candidates[j].Support
+			}
+			if candidates[i].Prevalence != candidates[j].Prevalence {
+				return candidates[i].Prevalence < candidates[j].Prevalence
+			}
+			if candidates[i].Violations != candidates[j].Violations {
+				return candidates[i].Violations < candidates[j].Violations
+			}
+			left, right := "", ""
+			if len(candidates[i].Scope) > 0 {
+				left = candidates[i].Scope[0]
+			}
+			if len(candidates[j].Scope) > 0 {
+				right = candidates[j].Scope[0]
+			}
+			return left < right
+		})
+		if maxPerKind > 0 && len(candidates) > maxPerKind {
+			candidates = candidates[:maxPerKind]
+		}
+		out = append(out, candidates...)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Kind != out[j].Kind {
+			return out[i].Kind < out[j].Kind
+		}
+		if len(out[i].Scope) == 0 || len(out[j].Scope) == 0 {
+			return len(out[i].Scope) < len(out[j].Scope)
+		}
+		return out[i].Scope[0] < out[j].Scope[0]
+	})
+	return out
+}
+
+func confidenceRank(confidence string) int {
+	switch strings.ToUpper(strings.TrimSpace(confidence)) {
+	case "HIGH":
+		return 3
+	case "MEDIUM":
+		return 2
+	case "LOW":
+		return 1
+	default:
+		return 0
+	}
 }
 
 func loadConfigOptional(path string) (*config.Config, error) {

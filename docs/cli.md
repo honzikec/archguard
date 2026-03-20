@@ -26,6 +26,7 @@ Flags:
 - `--min-support`
 - `--max-prevalence`
 - `--max-candidates-per-kind` (`0` = unlimited, default `200`)
+- `--workspace-mode` (`auto|off`, default `auto`)
 - `--emit-config`
 - `--emit-no-cycle-severity` (`warning|error`, default `warning`)
 - `--catalog` (`builtin|off`, default `builtin`)
@@ -42,6 +43,7 @@ Output notes:
 - `--debug` also prints framework/language resolution and mining normalization stats
 - candidate generation applies `--min-support` consistently across `no_import`, `no_package`, `file_pattern`, and `no_cycle`
 - to keep large repos practical, mining caps candidates per kind by default (`--max-candidates-per-kind=200`)
+- in `auto`, mine discovers monorepo workspaces from `package.json workspaces`, `pnpm-workspace.yaml`, and `nx/turbo` conventions and mines each workspace independently before merging
 - mine resolves a framework profile (`generic|nextjs|react|react_router|react_native|angular`) and applies normalization only to mining inputs
 - check/mine resolve language adapter (`auto|javascript|php`) before discovery/parsing
 - With `--emit-config --adopt-catalog`, adopted catalog rules are appended to emitted config

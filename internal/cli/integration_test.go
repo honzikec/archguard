@@ -309,6 +309,42 @@ func TestMineDebugTextIncludesScoreDetails(t *testing.T) {
 	}
 }
 
+func TestMineWorkspaceAutoDiscovery(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteFile(t, filepath.Join(dir, "package.json"), `{"workspaces":["apps/*"]}`)
+	mustWriteFile(t, filepath.Join(dir, "apps", "web", "package.json"), `{"name":"web"}`)
+	mustWriteFile(t, filepath.Join(dir, "apps", "api", "package.json"), `{"name":"api"}`)
+	mustWriteFile(t, filepath.Join(dir, "apps", "web", "src", "index.ts"), `export const web = 1`)
+	mustWriteFile(t, filepath.Join(dir, "apps", "api", "src", "index.ts"), `export const api = 1`)
+
+	code, _, errOut := runCmdInDir(t, dir, []string{
+		"mine", "--format", "json", "--catalog", "off", "--debug",
+	})
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%s", code, errOut)
+	}
+	if !strings.Contains(errOut, "mine workspaces: 2 (auto_workspaces)") {
+		t.Fatalf("expected auto workspace debug line, got: %s", errOut)
+	}
+}
+
+func TestMineWorkspaceModeOff(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteFile(t, filepath.Join(dir, "package.json"), `{"workspaces":["apps/*"]}`)
+	mustWriteFile(t, filepath.Join(dir, "apps", "web", "package.json"), `{"name":"web"}`)
+	mustWriteFile(t, filepath.Join(dir, "apps", "web", "src", "index.ts"), `export const web = 1`)
+
+	code, _, errOut := runCmdInDir(t, dir, []string{
+		"mine", "--format", "json", "--catalog", "off", "--debug", "--workspace-mode", "off",
+	})
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%s", code, errOut)
+	}
+	if !strings.Contains(errOut, "mine workspaces: 1 (off)") {
+		t.Fatalf("expected workspace-mode off debug line, got: %s", errOut)
+	}
+}
+
 func runCmdInDir(t *testing.T, dir string, args []string) (int, string, string) {
 	t.Helper()
 	cwd, _ := os.Getwd()
