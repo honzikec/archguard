@@ -54,3 +54,22 @@ func TestResolveAutodetectAmbiguous(t *testing.T) {
 		t.Fatalf("expected at least two matched frameworks, got %+v", res)
 	}
 }
+
+func TestResolveAutodetectRankedSelectsUniqueStrongest(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "src", "routes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Both nextjs and react_router dependencies exist; routes directory is a stronger react-router signal.
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"dependencies":{"next":"15.0.0","react-router-dom":"7.0.0"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res := Resolve("", []string{dir})
+	if res.Selected != "react_router" {
+		t.Fatalf("expected react_router from ranked auto-detection, got %+v", res)
+	}
+	if res.Reason != "auto_ranked" {
+		t.Fatalf("expected auto_ranked reason, got %+v", res)
+	}
+}

@@ -22,10 +22,10 @@ func (Profile) ID() string {
 
 func (Profile) Detect(roots []string) contracts.Detection {
 	if common.HasPackageDependency(roots, []string{"react-native", "expo"}) {
-		return contracts.Detection{Matched: true, Reason: "react-native or expo dependency detected"}
+		return contracts.Detection{Matched: true, Reason: "react-native or expo dependency detected", Score: 40}
 	}
 	if common.HasFileWithSuffix(roots, []string{".ios.ts", ".ios.tsx", ".android.ts", ".android.tsx", ".native.ts", ".native.tsx"}, 6) {
-		return contracts.Detection{Matched: true, Reason: "platform-specific react-native files detected"}
+		return contracts.Detection{Matched: true, Reason: "platform-specific react-native files detected", Score: 100}
 	}
 	return contracts.Detection{}
 }

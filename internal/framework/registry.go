@@ -68,6 +68,9 @@ func Resolve(explicitFramework string, roots []string) Resolution {
 	profiles := RegisteredProfiles()
 	matched := make([]string, 0)
 	reasons := map[string]string{}
+	bestScore := -1
+	bestID := ""
+	tiedBest := false
 	for _, p := range profiles {
 		d := p.Detect(roots)
 		if !d.Matched {
@@ -75,6 +78,19 @@ func Resolve(explicitFramework string, roots []string) Resolution {
 		}
 		matched = append(matched, p.ID())
 		reasons[p.ID()] = strings.TrimSpace(d.Reason)
+		score := d.Score
+		if score <= 0 {
+			score = 1
+		}
+		if score > bestScore {
+			bestScore = score
+			bestID = p.ID()
+			tiedBest = false
+			continue
+		}
+		if score == bestScore {
+			tiedBest = true
+		}
 	}
 	sort.Strings(matched)
 	resolution.Matched = matched
@@ -89,7 +105,12 @@ func Resolve(explicitFramework string, roots []string) Resolution {
 		resolution.Selected = matched[0]
 		resolution.Reason = "auto_detected"
 	default:
-		resolution.Reason = "auto_ambiguous"
+		if !tiedBest && bestID != "" {
+			resolution.Selected = bestID
+			resolution.Reason = "auto_ranked"
+		} else {
+			resolution.Reason = "auto_ambiguous"
+		}
 	}
 	return resolution
 }

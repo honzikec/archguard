@@ -23,10 +23,10 @@ func (Profile) ID() string {
 
 func (Profile) Detect(roots []string) contracts.Detection {
 	if common.HasAnyDirectory(roots, []string{"app/routes", "src/routes"}) {
-		return contracts.Detection{Matched: true, Reason: "routes directory detected"}
+		return contracts.Detection{Matched: true, Reason: "routes directory detected", Score: 100}
 	}
 	if common.HasPackageDependency(roots, []string{"react-router", "react-router-dom", "@react-router/dev"}) {
-		return contracts.Detection{Matched: true, Reason: "react-router dependency detected"}
+		return contracts.Detection{Matched: true, Reason: "react-router dependency detected", Score: 30}
 	}
 	return contracts.Detection{}
 }

@@ -13,7 +13,7 @@ ArchGuard keeps policy enforcement generic and applies optional framework-aware 
 
 1. `mine` resolves profile via `internal/framework.Resolve(...)`.
    - explicit `project.framework` wins
-   - auto-detect selects a single matching profile
+   - auto-detect uses weighted evidence and selects a unique strongest match when possible
    - ambiguous auto-detect falls back to `generic`
 2. `mine` normalizes graph/files through `internal/framework.NormalizeMiningInputs(...)`.
 3. Candidate mining and catalog matching run on normalized inputs.

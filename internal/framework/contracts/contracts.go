@@ -3,6 +3,7 @@ package contracts
 type Detection struct {
 	Matched bool
 	Reason  string
+	Score   int
 }
 
 type Profile interface {

@@ -19,11 +19,11 @@ func (Profile) ID() string {
 }
 
 func (Profile) Detect(roots []string) contracts.Detection {
-	if common.HasAnyFileNamed(roots, []string{"next.config.js", "next.config.mjs", "next.config.ts", "next.config.cjs"}) {
-		return contracts.Detection{Matched: true, Reason: "next.config.* found"}
+	if common.HasAnyFileNamed(roots, []string{"next.config.js", "next.config.mjs", "next.config.ts", "next.config.cjs", "next-env.d.ts"}) {
+		return contracts.Detection{Matched: true, Reason: "next project marker found", Score: 100}
 	}
 	if common.HasPackageDependency(roots, []string{"next"}) {
-		return contracts.Detection{Matched: true, Reason: "package.json contains next dependency"}
+		return contracts.Detection{Matched: true, Reason: "package.json contains next dependency", Score: 20}
 	}
 	return contracts.Detection{}
 }

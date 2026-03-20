@@ -20,10 +20,10 @@ func (Profile) ID() string {
 
 func (Profile) Detect(roots []string) contracts.Detection {
 	if common.HasAnyFileNamed(roots, []string{"angular.json"}) {
-		return contracts.Detection{Matched: true, Reason: "angular.json found"}
+		return contracts.Detection{Matched: true, Reason: "angular.json found", Score: 100}
 	}
 	if common.HasPackageDependency(roots, []string{"@angular/core"}) {
-		return contracts.Detection{Matched: true, Reason: "@angular/core dependency detected"}
+		return contracts.Detection{Matched: true, Reason: "@angular/core dependency detected", Score: 35}
 	}
 	return contracts.Detection{}
 }

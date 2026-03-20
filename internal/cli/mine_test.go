@@ -63,3 +63,26 @@ func TestResolveFrameworkAmbiguousFallsBackToGeneric(t *testing.T) {
 		t.Fatalf("expected auto_ambiguous reason, got %+v", res)
 	}
 }
+
+func TestResolveFrameworkRankedAutoSelection(t *testing.T) {
+	dir := t.TempDir()
+	wd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(wd) }()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "src", "routes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"dependencies":{"next":"15.0.0","react-router-dom":"7.0.0"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res := framework.Resolve("", []string{"."})
+	if res.Selected != "react_router" {
+		t.Fatalf("expected auto-ranked react_router selection, got %+v", res)
+	}
+	if res.Reason != "auto_ranked" {
+		t.Fatalf("expected auto_ranked reason, got %+v", res)
+	}
+}
