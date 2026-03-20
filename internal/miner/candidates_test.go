@@ -145,12 +145,58 @@ func TestProposeNoCycleUsesComponentCandidates(t *testing.T) {
 	}
 }
 
+func TestProposeNoImportSkipsNeverObservedTargets(t *testing.T) {
+	files := make([]string, 0)
+	for i := 0; i < 20; i++ {
+		files = append(files, fmt.Sprintf("src/domain/f%d.ts", i))
+		files = append(files, fmt.Sprintf("src/infra/f%d.ts", i))
+	}
+	g := graph.Build(nil, files)
+	candidates := miner.Propose(g, files, miner.Options{
+		MinSupport:    20,
+		MaxPrevalence: 1,
+	})
+	for _, c := range candidates {
+		if c.Kind == config.KindNoImport {
+			t.Fatalf("expected no no_import candidates when no imports are observed, got %+v", c)
+		}
+	}
+}
+
+func TestProposeNoPackageRequiresGlobalUsageForZeroViolationCandidates(t *testing.T) {
+	files := make([]string, 0)
+	imports := make([]model.ImportRef, 0)
+	for i := 0; i < 20; i++ {
+		files = append(files, fmt.Sprintf("src/domain/f%d.ts", i))
+		files = append(files, fmt.Sprintf("src/infra/f%d.ts", i))
+	}
+	// Package usage is below default zero-violation evidence threshold (minSupport/2 = 10).
+	for i := 0; i < 5; i++ {
+		imports = append(imports, model.ImportRef{
+			SourceFile:      fmt.Sprintf("src/infra/f%d.ts", i),
+			RawImport:       "axios",
+			IsPackageImport: true,
+		})
+	}
+
+	g := graph.Build(imports, files)
+	candidates := miner.Propose(g, files, miner.Options{
+		MinSupport:    20,
+		MaxPrevalence: 1,
+	})
+	for _, c := range candidates {
+		if c.Kind == config.KindNoPackage && len(c.Scope) > 0 && c.Scope[0] == "src/domain/**" && len(c.Target) > 0 && c.Target[0] == "axios" {
+			t.Fatalf("expected no no_package candidate for low-global-usage package, got %+v", c)
+		}
+	}
+}
+
 func TestProposeCapsCandidatesPerKind(t *testing.T) {
 	files := make([]string, 0)
 	imports := make([]model.ImportRef, 0)
 	pkgs := []string{"axios", "lodash", "zod"}
 	dirs := []string{"src/a", "src/b", "src/c"}
-	for _, dir := range dirs {
+	for dirIdx, dir := range dirs {
 		for i := 0; i < 25; i++ {
 			file := fmt.Sprintf("%s/f%d.ts", dir, i)
 			files = append(files, file)
@@ -158,6 +204,12 @@ func TestProposeCapsCandidatesPerKind(t *testing.T) {
 				SourceFile:      file,
 				RawImport:       pkgs[i%len(pkgs)],
 				IsPackageImport: true,
+			})
+			targetDir := dirs[(dirIdx+1)%len(dirs)]
+			imports = append(imports, model.ImportRef{
+				SourceFile:      file,
+				ResolvedPath:    fmt.Sprintf("%s/f%d.ts", targetDir, i),
+				IsPackageImport: false,
 			})
 		}
 	}

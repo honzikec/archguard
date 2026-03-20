@@ -42,6 +42,7 @@ Output notes:
 - text output stays concise by default; use `--debug` to print detailed catalog scoring/evidence
 - `--debug` also prints framework/language resolution and mining normalization stats
 - candidate generation applies `--min-support` consistently across `no_import`, `no_package`, `file_pattern`, and `no_cycle`
+- zero-violation `no_import`/`no_package` candidates are emitted only when target usage is meaningful elsewhere (to reduce low-signal noise)
 - to keep large repos practical, mining caps candidates per kind by default (`--max-candidates-per-kind=200`)
 - in `auto`, mine discovers monorepo workspaces from `package.json workspaces`, `pnpm-workspace.yaml`, and `nx/turbo` conventions and mines each workspace independently before merging
 - mine resolves a framework profile (`generic|nextjs|react|react_router|react_native|angular`) and applies normalization only to mining inputs

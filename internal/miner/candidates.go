@@ -69,6 +69,14 @@ func Propose(g *graph.Graph, allFiles []string, opts Options) []Candidate {
 
 func proposeNoImport(g *graph.Graph, opts Options) []Candidate {
 	candidates := make([]Candidate, 0)
+	globalTargetUsage := map[string]int{}
+	for _, targets := range g.Edges {
+		for targetSubtree, count := range targets {
+			globalTargetUsage[targetSubtree] += count
+		}
+	}
+	minGlobalUsage := minZeroViolationTargetUsage(opts.MinSupport)
+
 	for sourceSubtree, totalFiles := range g.Nodes {
 		if totalFiles < opts.MinSupport {
 			continue
@@ -77,9 +85,18 @@ func proposeNoImport(g *graph.Graph, opts Options) []Candidate {
 			if sourceSubtree == targetSubtree {
 				continue
 			}
+			targetUsage := globalTargetUsage[targetSubtree]
+			if targetUsage == 0 {
+				// Skip never-observed targets to avoid combinatorial no-signal rules.
+				continue
+			}
 			violations := 0
 			if edges, ok := g.Edges[sourceSubtree]; ok {
 				violations = edges[targetSubtree]
+			}
+			if violations == 0 && targetUsage < minGlobalUsage {
+				// Zero-violation rules are only useful when the target is materially used elsewhere.
+				continue
 			}
 			prevalence := float64(violations) / float64(totalFiles)
 			if prevalence > opts.MaxPrevalence {
@@ -104,19 +121,30 @@ func proposeNoImport(g *graph.Graph, opts Options) []Candidate {
 func proposeNoPackage(g *graph.Graph, opts Options) []Candidate {
 	candidates := make([]Candidate, 0)
 	allPackages := map[string]struct{}{}
+	globalPackageUsage := map[string]int{}
 	for _, packages := range g.PackageEdges {
-		for pkg := range packages {
+		for pkg, count := range packages {
 			allPackages[pkg] = struct{}{}
+			globalPackageUsage[pkg] += count
 		}
 	}
+	minGlobalUsage := minZeroViolationTargetUsage(opts.MinSupport)
+
 	for sourceSubtree, totalFiles := range g.Nodes {
 		if totalFiles < opts.MinSupport {
 			continue
 		}
 		for pkg := range allPackages {
+			pkgUsage := globalPackageUsage[pkg]
+			if pkgUsage == 0 {
+				continue
+			}
 			violations := 0
 			if edges, ok := g.PackageEdges[sourceSubtree]; ok {
 				violations = edges[pkg]
+			}
+			if violations == 0 && pkgUsage < minGlobalUsage {
+				continue
 			}
 			prevalence := float64(violations) / float64(totalFiles)
 			if prevalence > opts.MaxPrevalence {
@@ -297,6 +325,17 @@ func rankConfidence(confidence string) int {
 	default:
 		return 0
 	}
+}
+
+func minZeroViolationTargetUsage(minSupport int) int {
+	if minSupport <= 1 {
+		return 1
+	}
+	threshold := minSupport / 2
+	if threshold < 1 {
+		return 1
+	}
+	return threshold
 }
 
 func confidence(prevalence float64, support int) string {
