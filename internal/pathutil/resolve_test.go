@@ -65,6 +65,56 @@ func TestResolvePHPRelativeImport(t *testing.T) {
 	}
 }
 
+func TestResolveAliasFromJSONCTSConfig(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "src", "infra", "db.ts"), "export const db = {}")
+	mustWrite(t, filepath.Join(dir, "tsconfig.json"), `/* generated */
+{
+  // tsconfig can include comments and trailing commas
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*",],
+    },
+  },
+}`)
+
+	wd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(wd) }()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	resolver, err := pathutil.NewResolver(".", config.ProjectSettings{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, isPkg := resolver.Resolve("src/domain/user.ts", "@/infra/db")
+	if isPkg || resolved != "src/infra/db.ts" {
+		t.Fatalf("unexpected JSONC alias resolution: resolved=%s isPkg=%t", resolved, isPkg)
+	}
+}
+
+func TestResolverAcceptsCommentedTSConfigWithoutCompilerOptions(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "tsconfig.json"), `/* generated */
+{
+  // babel-style config
+  "extends": ["./base.json",],
+}`)
+
+	wd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(wd) }()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := pathutil.NewResolver(".", config.ProjectSettings{}); err != nil {
+		t.Fatalf("expected resolver to accept commented tsconfig, got error: %v", err)
+	}
+}
+
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

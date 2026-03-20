@@ -89,7 +89,7 @@ func (r *Resolver) loadTSConfig(path string) error {
 		return fmt.Errorf("failed to read %s: %w", path, err)
 	}
 	var cfg tsConfigFile
-	if err := json.Unmarshal(data, &cfg); err != nil {
+	if err := unmarshalJSONC(data, &cfg); err != nil {
 		return fmt.Errorf("failed to parse %s: %w", path, err)
 	}
 
@@ -107,6 +107,135 @@ func (r *Resolver) loadTSConfig(path string) error {
 		r.aliases[normalizedAlias] = append(r.aliases[normalizedAlias], targets...)
 	}
 	return nil
+}
+
+func unmarshalJSONC(data []byte, v any) error {
+	// Strip UTF-8 BOM when present.
+	if len(data) >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF {
+		data = data[3:]
+	}
+	clean := stripJSONComments(data)
+	clean = stripJSONTrailingCommas(clean)
+	return json.Unmarshal(clean, v)
+}
+
+func stripJSONComments(in []byte) []byte {
+	out := make([]byte, 0, len(in))
+	inString := false
+	escaped := false
+	lineComment := false
+	blockComment := false
+
+	for i := 0; i < len(in); i++ {
+		c := in[i]
+
+		if lineComment {
+			if c == '\n' {
+				lineComment = false
+				out = append(out, c)
+			}
+			continue
+		}
+		if blockComment {
+			if c == '\n' {
+				out = append(out, c)
+			}
+			if c == '*' && i+1 < len(in) && in[i+1] == '/' {
+				blockComment = false
+				i++
+			}
+			continue
+		}
+
+		if inString {
+			out = append(out, c)
+			if escaped {
+				escaped = false
+				continue
+			}
+			if c == '\\' {
+				escaped = true
+				continue
+			}
+			if c == '"' {
+				inString = false
+			}
+			continue
+		}
+
+		if c == '"' {
+			inString = true
+			out = append(out, c)
+			continue
+		}
+
+		if c == '/' && i+1 < len(in) {
+			next := in[i+1]
+			if next == '/' {
+				lineComment = true
+				i++
+				continue
+			}
+			if next == '*' {
+				blockComment = true
+				i++
+				continue
+			}
+		}
+
+		out = append(out, c)
+	}
+
+	return out
+}
+
+func stripJSONTrailingCommas(in []byte) []byte {
+	out := make([]byte, 0, len(in))
+	inString := false
+	escaped := false
+
+	for i := 0; i < len(in); i++ {
+		c := in[i]
+		if inString {
+			out = append(out, c)
+			if escaped {
+				escaped = false
+				continue
+			}
+			if c == '\\' {
+				escaped = true
+				continue
+			}
+			if c == '"' {
+				inString = false
+			}
+			continue
+		}
+
+		if c == '"' {
+			inString = true
+			out = append(out, c)
+			continue
+		}
+
+		if c == ',' {
+			j := i + 1
+			for j < len(in) {
+				if in[j] == ' ' || in[j] == '\n' || in[j] == '\r' || in[j] == '\t' {
+					j++
+					continue
+				}
+				break
+			}
+			if j < len(in) && (in[j] == '}' || in[j] == ']') {
+				continue
+			}
+		}
+
+		out = append(out, c)
+	}
+
+	return out
 }
 
 func (r *Resolver) Resolve(sourceFile, rawImport string) (string, bool) {
