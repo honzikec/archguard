@@ -10,8 +10,13 @@ import (
 )
 
 func runInit(args []string) int {
-	if len(args) > 0 && args[0] == "profile" {
-		return runInitProfile(args[1:])
+	if len(args) > 0 {
+		switch args[0] {
+		case "profile":
+			return runInitProfile(args[1:])
+		case "adapter":
+			return runInitAdapter(args[1:])
+		}
 	}
 
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
@@ -82,6 +87,54 @@ func runInitProfile(args []string) int {
 
 	if !common.quiet {
 		fmt.Printf("Created profile scaffold %s (id=%s)\n", targetDir, profileID)
+	}
+	return 0
+}
+
+func runInitAdapter(args []string) int {
+	fs := flag.NewFlagSet("init adapter", flag.ContinueOnError)
+	setFlagSetOutput(fs)
+	common := bindCommonFlags(fs, commonFlags{configPath: "archguard.yaml", format: "text"})
+	name := fs.String("name", "", "Language adapter id (for example python)")
+	dir := fs.String("dir", "internal/language", "Target base directory for generated scaffold")
+	force := fs.Bool("force", false, "Overwrite generated files if they already exist")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	adapterID := normalizeProfileID(*name)
+	if adapterID == "" {
+		fmt.Fprintln(os.Stderr, "adapter name is required (use --name)")
+		return 2
+	}
+	packageName := normalizePackageName(adapterID)
+
+	targetDir := filepath.Join(*dir, packageName)
+	adapterPath := filepath.Join(targetDir, "adapter.go")
+	testPath := filepath.Join(targetDir, "adapter_test.go")
+	if !*force {
+		if _, err := os.Stat(adapterPath); err == nil {
+			fmt.Fprintf(os.Stderr, "adapter scaffold already exists: %s (use --force to overwrite)\n", adapterPath)
+			return 2
+		}
+	}
+
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to create scaffold directory: %v\n", err)
+		return 2
+	}
+
+	if err := os.WriteFile(adapterPath, []byte(adapterTemplate(adapterID, packageName)), 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to write %s: %v\n", adapterPath, err)
+		return 2
+	}
+	if err := os.WriteFile(testPath, []byte(adapterTestTemplate(packageName)), 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to write %s: %v\n", testPath, err)
+		return 2
+	}
+
+	if !common.quiet {
+		fmt.Printf("Created adapter scaffold %s (id=%s)\n", targetDir, adapterID)
 	}
 	return 0
 }
@@ -158,6 +211,62 @@ func TestNormalizeIdempotent(t *testing.T) {
 	input := "src/example/$id.ts"
 	if got := p.NormalizeFile(p.NormalizeFile(input)); got != p.NormalizeFile(input) {
 		t.Fatalf("expected idempotent normalization, got %%q", got)
+	}
+}
+`, packageName)
+}
+
+func adapterTemplate(adapterID, packageName string) string {
+	return fmt.Sprintf(`package %s
+
+import (
+	"os"
+	"strings"
+
+	"github.com/honzikec/archguard/internal/language/contracts"
+	"github.com/honzikec/archguard/internal/model"
+)
+
+type Adapter struct{}
+
+func New() contracts.Adapter {
+	return Adapter{}
+}
+
+func (Adapter) ID() string {
+	return %q
+}
+
+func (Adapter) Detect(roots []string) contracts.Detection {
+	_ = roots
+	// TODO: add language-specific detection logic.
+	return contracts.Detection{}
+}
+
+func (Adapter) SupportsFile(path string) bool {
+	path = strings.ToLower(strings.TrimSpace(path))
+	return strings.HasSuffix(path, ".example")
+}
+
+func (Adapter) ParseFile(path string) ([]model.ImportRef, error) {
+	// TODO: replace with deterministic parsing for your language.
+	if _, err := os.ReadFile(path); err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+`, packageName, adapterID)
+}
+
+func adapterTestTemplate(packageName string) string {
+	return fmt.Sprintf(`package %s
+
+import "testing"
+
+func TestSupportsFileDeterministic(t *testing.T) {
+	a := Adapter{}
+	if a.SupportsFile("src/file.example") != a.SupportsFile("src/file.example") {
+		t.Fatal("expected deterministic SupportsFile result")
 	}
 }
 `, packageName)

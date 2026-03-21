@@ -66,6 +66,7 @@ Flags:
 Subcommands:
 - `archguard init` writes a starter config file
 - `archguard init profile --name <id> [--dir <path>] [--force]` scaffolds a framework profile package for contributors
+- `archguard init adapter --name <id> [--dir <path>] [--force]` scaffolds a language adapter package for contributors
 
 ## `archguard version`
 

@@ -10,6 +10,7 @@ Required changes:
 - add package-local tests (`profile_test.go`)
 - register profile in `internal/framework/registry.go`
 - update docs (`docs/frameworks.md`, `docs/config.md`, `docs/cli.md`)
+- optional scaffold helper: `archguard init profile --name <profile_id>`
 
 PR scope rule:
 - framework profile PRs should not change policy/check semantics
@@ -23,6 +24,7 @@ Required changes:
 - keep parser/discovery behavior behind adapter boundary
 - add adapter tests and update `docs/languages.md`
 - update config validation/docs for `project.language` values when adding new adapter ids
+- optional scaffold helper: `archguard init adapter --name <adapter_id>`
 
 PR scope rule:
 - language adapter PRs should avoid framework profile changes unless strictly required
