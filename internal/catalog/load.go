@@ -32,6 +32,14 @@ func LoadBuiltin() ([]Pattern, error) {
 			return nil, fmt.Errorf("failed reading catalog file %s: %w", entry.Name(), err)
 		}
 
+		var raw any
+		if err := yaml.Unmarshal(b, &raw); err != nil {
+			return nil, fmt.Errorf("failed parsing catalog file %s: %w", entry.Name(), err)
+		}
+		if err := validateSchemaDocument(raw); err != nil {
+			return nil, fmt.Errorf("invalid catalog file %s: %w", entry.Name(), err)
+		}
+
 		dec := yaml.NewDecoder(bytes.NewReader(b))
 		dec.KnownFields(true)
 
