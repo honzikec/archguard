@@ -17,6 +17,14 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to read config: %w", err)
 	}
 
+	var raw any
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("failed to parse config: %w", err)
+	}
+	if err := validateSchemaDocument(raw); err != nil {
+		return nil, err
+	}
+
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 

@@ -1,98 +1,32 @@
 package report
 
 import (
-	"encoding/json"
 	"fmt"
+	"os"
+	"strings"
 
 	"github.com/honzikec/archguard/internal/model"
+	sarifreport "github.com/owenrumney/go-sarif/v3/pkg/report"
+	sarif "github.com/owenrumney/go-sarif/v3/pkg/report/v210/sarif"
 )
 
-type SarifLog struct {
-	Version string     `json:"version"`
-	Schema  string     `json:"$schema"`
-	Runs    []SarifRun `json:"runs"`
-}
-
-type SarifRun struct {
-	Tool       SarifTool      `json:"tool"`
-	Results    []SarifResult  `json:"results"`
-	Properties map[string]any `json:"properties,omitempty"`
-}
-
-type SarifTool struct {
-	Driver SarifDriver `json:"driver"`
-}
-
-type SarifDriver struct {
-	Name           string      `json:"name"`
-	InformationURI string      `json:"informationUri"`
-	Rules          []SarifRule `json:"rules"`
-}
-
-type SarifRule struct {
-	ID               string           `json:"id"`
-	ShortDescription SarifMessageText `json:"shortDescription"`
-	Help             SarifMessageText `json:"help"`
-}
-
-type SarifResult struct {
-	RuleID              string            `json:"ruleId"`
-	Level               string            `json:"level"`
-	Message             SarifMessageText  `json:"message"`
-	Locations           []SarifLocation   `json:"locations"`
-	PartialFingerprints map[string]string `json:"partialFingerprints,omitempty"`
-}
-
-type SarifMessageText struct {
-	Text string `json:"text"`
-}
-
-type SarifLocation struct {
-	PhysicalLocation SarifPhysicalLocation `json:"physicalLocation"`
-}
-
-type SarifPhysicalLocation struct {
-	ArtifactLocation SarifArtifactLocation `json:"artifactLocation"`
-	Region           SarifRegion           `json:"region"`
-}
-
-type SarifArtifactLocation struct {
-	URI string `json:"uri"`
-}
-
-type SarifRegion struct {
-	StartLine   int `json:"startLine"`
-	StartColumn int `json:"startColumn"`
-}
-
 func PrintSARIF(findings []model.Finding, summary Summary) {
-	run := SarifRun{
-		Tool: SarifTool{
-			Driver: SarifDriver{
-				Name:           "ArchGuard",
-				InformationURI: "https://github.com/honzikec/archguard",
-				Rules:          []SarifRule{},
-			},
-		},
-		Results: []SarifResult{},
-		Properties: map[string]any{
-			"summary": summary,
-		},
-	}
+	report := sarifreport.NewV210Report()
+	run := sarif.NewRunWithInformationURI("ArchGuard", "https://github.com/honzikec/archguard")
+	run.WithProperties(sarif.NewPropertyBag().Add("summary", summary))
 
-	seenRules := map[string]struct{}{}
+	seenRules := map[string]bool{}
 	for _, f := range findings {
-		if _, ok := seenRules[f.RuleID]; !ok {
-			run.Tool.Driver.Rules = append(run.Tool.Driver.Rules, SarifRule{
-				ID:               f.RuleID,
-				ShortDescription: SarifMessageText{Text: f.RuleKind},
-				Help:             SarifMessageText{Text: f.Message},
-			})
-			seenRules[f.RuleID] = struct{}{}
+		if !seenRules[f.RuleID] {
+			rule := run.AddRule(f.RuleID).WithDescription(f.RuleKind)
+			if msg := strings.TrimSpace(f.Message); msg != "" {
+				rule.WithMarkdownHelp(msg)
+			}
+			seenRules[f.RuleID] = true
 		}
 
 		level := "warning"
-		if f.Severity == "error" {
+		if strings.EqualFold(f.Severity, "error") {
 			level = "error"
 		}
 		line := f.Line
@@ -103,29 +37,26 @@ func PrintSARIF(findings []model.Finding, summary Summary) {
 		if col <= 0 {
 			col = 1
 		}
-		result := SarifResult{
-			RuleID:  f.RuleID,
-			Level:   level,
-			Message: SarifMessageText{Text: f.Message},
-			Locations: []SarifLocation{{
-				PhysicalLocation: SarifPhysicalLocation{
-					ArtifactLocation: SarifArtifactLocation{URI: f.FilePath},
-					Region:           SarifRegion{StartLine: line, StartColumn: col},
-				},
-			}},
-		}
+		result := run.CreateResultForRule(f.RuleID).
+			WithLevel(level).
+			WithMessage(sarif.NewTextMessage(f.Message)).
+			AddLocation(sarif.NewLocationWithPhysicalLocation(
+				sarif.NewPhysicalLocation().
+					WithArtifactLocation(sarif.NewSimpleArtifactLocation(f.FilePath)).
+					WithRegion(sarif.NewRegion().WithStartLine(line).WithStartColumn(col)),
+			))
 		if f.Fingerprint != "" {
-			result.PartialFingerprints = map[string]string{"primaryLocationLineHash": f.Fingerprint}
+			result.WithPartialFingerprints(map[string]string{
+				"primaryLocationLineHash": f.Fingerprint,
+			})
 		}
-		run.Results = append(run.Results, result)
 	}
+	report.AddRun(run)
 
-	log := SarifLog{
-		Version: "2.1.0",
-		Schema:  "https://json.schemastore.org/sarif-2.1.0.json",
-		Runs:    []SarifRun{run},
+	if err := report.Validate(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: generated SARIF failed validation: %v\n", err)
 	}
-
-	data, _ := json.MarshalIndent(log, "", "  ")
-	fmt.Println(string(data))
+	if err := report.PrettyWrite(os.Stdout); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to write SARIF output: %v\n", err)
+	}
 }

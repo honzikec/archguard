@@ -2,10 +2,10 @@ package config
 
 import (
 	"fmt"
-	"path/filepath"
 	"regexp"
 	"strings"
 
+	"github.com/bmatcuk/doublestar/v4"
 	"github.com/honzikec/archguard/internal/framework"
 	"github.com/honzikec/archguard/internal/language"
 )
@@ -215,9 +215,7 @@ func validateGlob(pattern string) error {
 	if pattern == "" {
 		return fmt.Errorf("glob pattern cannot be empty")
 	}
-	// basic validation by stripping doublestar for filepath.Match compatibility
-	trial := strings.ReplaceAll(pattern, "**", "*")
-	if _, err := filepath.Match(trial, "x"); err != nil {
+	if _, err := doublestar.PathMatch(pattern, "x"); err != nil {
 		return err
 	}
 	return nil

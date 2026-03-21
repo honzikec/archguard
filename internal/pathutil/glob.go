@@ -1,20 +1,23 @@
 package pathutil
 
 import (
-	"path"
-	"regexp"
 	"strings"
+
+	"github.com/bmatcuk/doublestar/v4"
 )
 
 func MatchGlob(pattern, input string) bool {
-	pattern = Normalize(pattern)
+	pattern = Normalize(strings.TrimSpace(pattern))
 	input = Normalize(input)
+	if pattern == "" {
+		return false
+	}
 
-	re, err := regexp.Compile(globToRegex(pattern))
+	matched, err := doublestar.PathMatch(pattern, input)
 	if err != nil {
 		return false
 	}
-	return re.MatchString(input)
+	return matched
 }
 
 func MatchAny(patterns []string, input string) bool {
@@ -24,36 +27,4 @@ func MatchAny(patterns []string, input string) bool {
 		}
 	}
 	return false
-}
-
-func globToRegex(pattern string) string {
-	pattern = path.Clean(pattern)
-	if pattern == "." {
-		pattern = "**"
-	}
-
-	var b strings.Builder
-	b.WriteString("^")
-	runes := []rune(pattern)
-	for i := 0; i < len(runes); i++ {
-		ch := runes[i]
-		switch ch {
-		case '*':
-			if i+1 < len(runes) && runes[i+1] == '*' {
-				b.WriteString(".*")
-				i++
-			} else {
-				b.WriteString("[^/]*")
-			}
-		case '?':
-			b.WriteString("[^/]")
-		case '.', '(', ')', '+', '|', '^', '$', '{', '}', '[', ']', '\\':
-			b.WriteString("\\")
-			b.WriteRune(ch)
-		default:
-			b.WriteRune(ch)
-		}
-	}
-	b.WriteString("$")
-	return b.String()
 }
