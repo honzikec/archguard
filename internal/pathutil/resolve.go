@@ -247,7 +247,7 @@ func (r *Resolver) Resolve(sourceFile, rawImport string) (string, bool) {
 		if resolved, ok := r.probeLocal(base); ok {
 			return resolved, false
 		}
-		return "", true
+		return "", false
 	}
 
 	if strings.HasPrefix(rawImport, "/") {
@@ -255,7 +255,7 @@ func (r *Resolver) Resolve(sourceFile, rawImport string) (string, bool) {
 		if resolved, ok := r.probeLocal(base); ok {
 			return resolved, false
 		}
-		return "", true
+		return "", false
 	}
 
 	for _, alias := range r.aliasOrder {

@@ -23,7 +23,7 @@ func Canonical(raw string) string {
 	}
 
 	if strings.HasPrefix(raw, ".") || strings.HasPrefix(raw, "/") {
-		return raw
+		return ""
 	}
 
 	prefix := ""

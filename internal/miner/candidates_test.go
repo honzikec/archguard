@@ -15,6 +15,11 @@ func TestProposeNoPackageCandidate(t *testing.T) {
 	imports := make([]model.ImportRef, 0)
 	for i := 0; i < 20; i++ {
 		files = append(files, fmt.Sprintf("src/domain/f%d.ts", i))
+		imports = append(imports, model.ImportRef{
+			SourceFile:      fmt.Sprintf("src/domain/f%d.ts", i),
+			ResolvedPath:    "src/domain/shared.ts",
+			IsPackageImport: false,
+		})
 	}
 	for i := 0; i < 20; i++ {
 		files = append(files, fmt.Sprintf("src/infra/f%d.ts", i))
@@ -163,6 +168,118 @@ func TestProposeNoImportSkipsNeverObservedTargets(t *testing.T) {
 	}
 }
 
+func TestProposeNoPackageSkipsZeroViolationCandidatesForInactiveSources(t *testing.T) {
+	files := make([]string, 0)
+	imports := make([]model.ImportRef, 0)
+	for i := 0; i < 20; i++ {
+		files = append(files, fmt.Sprintf("src/inactive/f%d.ts", i))
+		files = append(files, fmt.Sprintf("src/infra/f%d.ts", i))
+		imports = append(imports, model.ImportRef{
+			SourceFile:      fmt.Sprintf("src/infra/f%d.ts", i),
+			RawImport:       "axios",
+			IsPackageImport: true,
+		})
+	}
+
+	g := graph.Build(imports, files)
+	candidates := miner.Propose(g, files, miner.Options{
+		MinSupport:    20,
+		MaxPrevalence: 1,
+	})
+	for _, c := range candidates {
+		if c.Kind == config.KindNoPackage && len(c.Scope) > 0 && c.Scope[0] == "src/inactive/**" {
+			t.Fatalf("expected inactive source scope to not emit zero-violation no_package candidate, got %+v", c)
+		}
+	}
+}
+
+func TestProposeNoImportSkipsZeroViolationCandidatesForInactiveSources(t *testing.T) {
+	files := make([]string, 0)
+	imports := make([]model.ImportRef, 0)
+	for i := 0; i < 20; i++ {
+		files = append(files, fmt.Sprintf("src/inactive/f%d.ts", i))
+		files = append(files, fmt.Sprintf("src/common/f%d.ts", i))
+		files = append(files, fmt.Sprintf("src/active/f%d.ts", i))
+		imports = append(imports, model.ImportRef{
+			SourceFile:      fmt.Sprintf("src/active/f%d.ts", i),
+			ResolvedPath:    fmt.Sprintf("src/common/f%d.ts", i),
+			IsPackageImport: false,
+		})
+	}
+
+	g := graph.Build(imports, files)
+	candidates := miner.Propose(g, files, miner.Options{
+		MinSupport:    20,
+		MaxPrevalence: 1,
+	})
+	for _, c := range candidates {
+		if c.Kind == config.KindNoImport && len(c.Scope) > 0 && c.Scope[0] == "src/inactive/**" {
+			t.Fatalf("expected inactive source scope to not emit zero-violation no_import candidate, got %+v", c)
+		}
+	}
+}
+
+func TestProposeNoImportSkipsZeroViolationCandidatesForTestLikeScopes(t *testing.T) {
+	files := make([]string, 0)
+	imports := make([]model.ImportRef, 0)
+	for i := 0; i < 20; i++ {
+		files = append(files, fmt.Sprintf("src/feature/test/f%d.ts", i))
+		files = append(files, fmt.Sprintf("src/common/f%d.ts", i))
+		files = append(files, fmt.Sprintf("src/active/f%d.ts", i))
+		imports = append(imports, model.ImportRef{
+			SourceFile:      fmt.Sprintf("src/feature/test/f%d.ts", i),
+			ResolvedPath:    "src/feature/test/shared.ts",
+			IsPackageImport: false,
+		})
+		imports = append(imports, model.ImportRef{
+			SourceFile:      fmt.Sprintf("src/active/f%d.ts", i),
+			ResolvedPath:    fmt.Sprintf("src/common/f%d.ts", i),
+			IsPackageImport: false,
+		})
+	}
+
+	g := graph.Build(imports, files)
+	candidates := miner.Propose(g, files, miner.Options{
+		MinSupport:    20,
+		MaxPrevalence: 1,
+	})
+	for _, c := range candidates {
+		if c.Kind == config.KindNoImport && len(c.Scope) > 0 && c.Scope[0] == "src/feature/test/**" {
+			t.Fatalf("expected test-like source scope to not emit zero-violation no_import candidate, got %+v", c)
+		}
+	}
+}
+
+func TestProposeNoPackageSkipsZeroViolationCandidatesForTestLikeScopes(t *testing.T) {
+	files := make([]string, 0)
+	imports := make([]model.ImportRef, 0)
+	for i := 0; i < 20; i++ {
+		files = append(files, fmt.Sprintf("src/feature/test/f%d.ts", i))
+		files = append(files, fmt.Sprintf("src/infra/f%d.ts", i))
+		imports = append(imports, model.ImportRef{
+			SourceFile:      fmt.Sprintf("src/feature/test/f%d.ts", i),
+			ResolvedPath:    "src/feature/test/shared.ts",
+			IsPackageImport: false,
+		})
+		imports = append(imports, model.ImportRef{
+			SourceFile:      fmt.Sprintf("src/infra/f%d.ts", i),
+			RawImport:       "axios",
+			IsPackageImport: true,
+		})
+	}
+
+	g := graph.Build(imports, files)
+	candidates := miner.Propose(g, files, miner.Options{
+		MinSupport:    20,
+		MaxPrevalence: 1,
+	})
+	for _, c := range candidates {
+		if c.Kind == config.KindNoPackage && len(c.Scope) > 0 && c.Scope[0] == "src/feature/test/**" {
+			t.Fatalf("expected test-like source scope to not emit zero-violation no_package candidate, got %+v", c)
+		}
+	}
+}
+
 func TestProposeNoPackageRequiresGlobalUsageForZeroViolationCandidates(t *testing.T) {
 	files := make([]string, 0)
 	imports := make([]model.ImportRef, 0)
@@ -253,6 +370,90 @@ func TestProposeNoImportSkipsHighlySharedZeroViolationTargets(t *testing.T) {
 		if c.Kind == config.KindNoImport && len(c.Scope) > 0 && c.Scope[0] == "src/s7/**" && len(c.Target) > 0 && c.Target[0] == "src/common/**" {
 			t.Fatalf("expected highly shared zero-violation no_import candidate to be skipped, got %+v", c)
 		}
+	}
+}
+
+func TestProposeNoImportCapsZeroViolationPerScope(t *testing.T) {
+	nodes := map[string]int{
+		"src/domain": 20,
+	}
+	edges := map[string]map[string]int{}
+	fileEdges := map[string]map[string]struct{}{
+		"src/domain/f0.ts": {
+			"src/domain/f1.ts": {},
+		},
+	}
+	for i := 0; i < 10; i++ {
+		target := fmt.Sprintf("src/t%d", i)
+		source := fmt.Sprintf("src/s%d", i)
+		nodes[target] = 20
+		nodes[source] = 20
+		edges[source] = map[string]int{target: 20}
+	}
+
+	g := &graph.Graph{
+		Nodes:        nodes,
+		Edges:        edges,
+		PackageEdges: map[string]map[string]int{},
+		FileEdges:    fileEdges,
+	}
+
+	candidates := miner.Propose(g, nil, miner.Options{
+		MinSupport:           20,
+		MaxPrevalence:        1,
+		MaxCandidatesPerKind: 200,
+	})
+
+	count := 0
+	for _, c := range candidates {
+		if c.Kind == config.KindNoImport && len(c.Scope) > 0 && c.Scope[0] == "src/domain/**" && c.Violations == 0 {
+			count++
+		}
+	}
+	if count != 5 {
+		t.Fatalf("expected zero-violation no_import candidates for src/domain to be capped at 5, got %d", count)
+	}
+}
+
+func TestProposeNoPackageCapsZeroViolationPerScope(t *testing.T) {
+	nodes := map[string]int{
+		"src/domain": 20,
+	}
+	packageEdges := map[string]map[string]int{}
+	fileEdges := map[string]map[string]struct{}{
+		"src/domain/f0.ts": {
+			"src/domain/f1.ts": {},
+		},
+	}
+	for i := 0; i < 10; i++ {
+		source := fmt.Sprintf("src/s%d", i)
+		nodes[source] = 20
+		packageEdges[source] = map[string]int{
+			fmt.Sprintf("pkg%d", i): 20,
+		}
+	}
+
+	g := &graph.Graph{
+		Nodes:        nodes,
+		Edges:        map[string]map[string]int{},
+		PackageEdges: packageEdges,
+		FileEdges:    fileEdges,
+	}
+
+	candidates := miner.Propose(g, nil, miner.Options{
+		MinSupport:           20,
+		MaxPrevalence:        1,
+		MaxCandidatesPerKind: 200,
+	})
+
+	count := 0
+	for _, c := range candidates {
+		if c.Kind == config.KindNoPackage && len(c.Scope) > 0 && c.Scope[0] == "src/domain/**" && c.Violations == 0 {
+			count++
+		}
+	}
+	if count != 5 {
+		t.Fatalf("expected zero-violation no_package candidates for src/domain to be capped at 5, got %d", count)
 	}
 }
 

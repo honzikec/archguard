@@ -65,6 +65,37 @@ func TestResolvePHPRelativeImport(t *testing.T) {
 	}
 }
 
+func TestResolveUnresolvedLocalImportsAreNotPackages(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "src", "domain", "user.ts"), "export {}")
+
+	wd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(wd) }()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	resolver, err := pathutil.NewResolver(".", config.ProjectSettings{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, isPkg := resolver.Resolve("src/domain/user.ts", "../infra/missing")
+	if isPkg || resolved != "" {
+		t.Fatalf("expected unresolved relative import to remain non-package: resolved=%s isPkg=%t", resolved, isPkg)
+	}
+
+	resolved, isPkg = resolver.Resolve("src/domain/user.ts", "/missing/absolute")
+	if isPkg || resolved != "" {
+		t.Fatalf("expected unresolved absolute import to remain non-package: resolved=%s isPkg=%t", resolved, isPkg)
+	}
+
+	resolved, isPkg = resolver.Resolve("src/domain/user.ts", "react")
+	if !isPkg || resolved != "" {
+		t.Fatalf("expected bare package import classification: resolved=%s isPkg=%t", resolved, isPkg)
+	}
+}
+
 func TestResolveAliasFromJSONCTSConfig(t *testing.T) {
 	dir := t.TempDir()
 	mustWrite(t, filepath.Join(dir, "src", "infra", "db.ts"), "export const db = {}")

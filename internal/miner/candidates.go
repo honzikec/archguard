@@ -69,8 +69,10 @@ func Propose(g *graph.Graph, allFiles []string, opts Options) []Candidate {
 
 func proposeNoImport(g *graph.Graph, opts Options) []Candidate {
 	candidates := make([]Candidate, 0)
+	sourceActivity := sourceImportActivity(g)
 	globalTargetUsage := map[string]int{}
 	targetSourceSpread := map[string]int{}
+	sourceSubtrees := sortedKeys(g.Nodes)
 	for _, targets := range g.Edges {
 		for targetSubtree, count := range targets {
 			globalTargetUsage[targetSubtree] += count
@@ -84,7 +86,7 @@ func proposeNoImport(g *graph.Graph, opts Options) []Candidate {
 			}
 		}
 	}
-	minGlobalUsage := minZeroViolationTargetUsage(opts.MinSupport)
+	minGlobalUsage := minZeroViolationImportTargetUsage(opts.MinSupport)
 	activeSources := 0
 	for _, totalFiles := range g.Nodes {
 		if totalFiles >= opts.MinSupport {
@@ -92,12 +94,15 @@ func proposeNoImport(g *graph.Graph, opts Options) []Candidate {
 		}
 	}
 	maxSpread := maxZeroViolationSourceSpread(activeSources)
-
-	for sourceSubtree, totalFiles := range g.Nodes {
+	maxZeroPerScope := maxZeroViolationCandidatesPerScope(opts.MinSupport)
+	zeroViolationBySource := map[string]int{}
+	for _, sourceSubtree := range sourceSubtrees {
+		totalFiles := g.Nodes[sourceSubtree]
 		if totalFiles < opts.MinSupport {
 			continue
 		}
-		for targetSubtree := range g.Nodes {
+		sourceImportCount := sourceActivity[sourceSubtree]
+		for _, targetSubtree := range sourceSubtrees {
 			if sourceSubtree == targetSubtree {
 				continue
 			}
@@ -114,13 +119,27 @@ func proposeNoImport(g *graph.Graph, opts Options) []Candidate {
 				// Zero-violation rules are only useful when the target is materially used elsewhere.
 				continue
 			}
+			if violations == 0 && sourceImportCount == 0 {
+				// Inactive source scopes (no observed imports) produce low-signal blanket candidates.
+				continue
+			}
+			if violations == 0 && isLowSignalSourceScope(sourceSubtree) {
+				continue
+			}
 			if violations == 0 && targetSourceSpread[targetSubtree] > maxSpread {
 				// Highly shared targets produce broad low-signal zero-violation candidates.
+				continue
+			}
+			if violations == 0 && zeroViolationBySource[sourceSubtree] >= maxZeroPerScope {
+				// Keep zero-violation output diverse across scopes instead of saturating one scope.
 				continue
 			}
 			prevalence := float64(violations) / float64(totalFiles)
 			if prevalence > opts.MaxPrevalence {
 				continue
+			}
+			if violations == 0 {
+				zeroViolationBySource[sourceSubtree]++
 			}
 			candidates = append(candidates, Candidate{
 				Kind:       config.KindNoImport,
@@ -140,9 +159,11 @@ func proposeNoImport(g *graph.Graph, opts Options) []Candidate {
 
 func proposeNoPackage(g *graph.Graph, opts Options) []Candidate {
 	candidates := make([]Candidate, 0)
+	sourceActivity := sourceImportActivity(g)
 	allPackages := map[string]struct{}{}
 	globalPackageUsage := map[string]int{}
 	packageSourceSpread := map[string]int{}
+	sourceSubtrees := sortedKeys(g.Nodes)
 	for _, packages := range g.PackageEdges {
 		for pkg, count := range packages {
 			allPackages[pkg] = struct{}{}
@@ -160,12 +181,16 @@ func proposeNoPackage(g *graph.Graph, opts Options) []Candidate {
 		}
 	}
 	maxSpread := maxZeroViolationSourceSpread(activeSources)
-
-	for sourceSubtree, totalFiles := range g.Nodes {
+	maxZeroPerScope := maxZeroViolationCandidatesPerScope(opts.MinSupport)
+	zeroViolationBySource := map[string]int{}
+	packages := sortedSetKeys(allPackages)
+	for _, sourceSubtree := range sourceSubtrees {
+		totalFiles := g.Nodes[sourceSubtree]
 		if totalFiles < opts.MinSupport {
 			continue
 		}
-		for pkg := range allPackages {
+		sourceImportCount := sourceActivity[sourceSubtree]
+		for _, pkg := range packages {
 			pkgUsage := globalPackageUsage[pkg]
 			if pkgUsage == 0 {
 				continue
@@ -177,12 +202,24 @@ func proposeNoPackage(g *graph.Graph, opts Options) []Candidate {
 			if violations == 0 && pkgUsage < minGlobalUsage {
 				continue
 			}
+			if violations == 0 && sourceImportCount == 0 {
+				continue
+			}
+			if violations == 0 && isLowSignalSourceScope(sourceSubtree) {
+				continue
+			}
 			if violations == 0 && packageSourceSpread[pkg] > maxSpread {
+				continue
+			}
+			if violations == 0 && zeroViolationBySource[sourceSubtree] >= maxZeroPerScope {
 				continue
 			}
 			prevalence := float64(violations) / float64(totalFiles)
 			if prevalence > opts.MaxPrevalence {
 				continue
+			}
+			if violations == 0 {
+				zeroViolationBySource[sourceSubtree]++
 			}
 			candidates = append(candidates, Candidate{
 				Kind:       config.KindNoPackage,
@@ -305,6 +342,41 @@ func componentScopeRoot(nodes []string) string {
 	return strings.Join(common, "/")
 }
 
+func sourceImportActivity(g *graph.Graph) map[string]int {
+	activity := map[string]int{}
+	for sourceFile, targets := range g.FileEdges {
+		if len(targets) == 0 {
+			continue
+		}
+		sourceSubtree := path.Dir(sourceFile)
+		activity[sourceSubtree] += len(targets)
+	}
+	for sourceSubtree, packages := range g.PackageEdges {
+		for _, count := range packages {
+			activity[sourceSubtree] += count
+		}
+	}
+	return activity
+}
+
+func sortedKeys(m map[string]int) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sortedSetKeys(m map[string]struct{}) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func capCandidates(candidates []Candidate, max int) []Candidate {
 	if max <= 0 || len(candidates) <= max {
 		return candidates
@@ -370,6 +442,61 @@ func minZeroViolationTargetUsage(minSupport int) int {
 		return 1
 	}
 	return threshold
+}
+
+func minZeroViolationImportTargetUsage(minSupport int) int {
+	if minSupport <= 1 {
+		return 1
+	}
+	if minSupport < 1 {
+		return 1
+	}
+	return minSupport
+}
+
+func maxZeroViolationCandidatesPerScope(minSupport int) int {
+	if minSupport >= 50 {
+		return 8
+	}
+	if minSupport >= 20 {
+		return 5
+	}
+	return 3
+}
+
+func isLowSignalSourceScope(scope string) bool {
+	if scope == "" {
+		return false
+	}
+	parts := strings.Split(strings.ToLower(strings.Trim(scope, "/")), "/")
+	if len(parts) == 0 {
+		return false
+	}
+	lowSignal := map[string]struct{}{
+		"test":       {},
+		"tests":      {},
+		"__tests__":  {},
+		"testing":    {},
+		"fixture":    {},
+		"fixtures":   {},
+		"golden":     {},
+		"example":    {},
+		"examples":   {},
+		"sample":     {},
+		"samples":    {},
+		"benchmark":  {},
+		"benchmarks": {},
+		"e2e":        {},
+		"compliance": {},
+		"spec":       {},
+		"specs":      {},
+	}
+	for _, part := range parts {
+		if _, ok := lowSignal[part]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func maxZeroViolationSourceSpread(totalSources int) int {
