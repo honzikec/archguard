@@ -1,0 +1,8 @@
+{
+  "name": "demo/php-namespace-boundary",
+  "autoload": {
+    "psr-4": {
+      "App\\": "app/"
+    }
+  }
+}

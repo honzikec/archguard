@@ -10,7 +10,7 @@ func TestParseFileExtractsUseAndInclude(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "src", "index.php")
 	content := `<?php
-use App\\Services\\UserService;
+use App\Services\UserService;
 require_once './bootstrap.php';
 include "./infra/db.php";
 `

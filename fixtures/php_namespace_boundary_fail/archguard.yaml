@@ -1,0 +1,12 @@
+version: 1
+project:
+  roots: ["app"]
+  include: ["**/*.php"]
+  exclude: ["**/vendor/**"]
+  language: php
+rules:
+  - id: AG-PHP-NAMESPACE-NO-INFRA
+    kind: no_import
+    severity: error
+    scope: ["app/Domain/**"]
+    target: ["app/Infra/**"]

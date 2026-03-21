@@ -10,6 +10,7 @@ ArchGuard now routes file discovery and import parsing through a language adapte
 - `php`
   - supported files: `.php`, `.phtml`
   - import extraction: deterministic regex-based extraction of `use` and `require/include` string literals
+  - path resolution: relative include/require plus Composer `autoload.psr-4` / `autoload-dev.psr-4` namespace mapping
 
 ## Selection model
 
@@ -34,6 +35,6 @@ ArchGuard now routes file discovery and import parsing through a language adapte
 
 ## Current PHP limitations
 
-- namespace `use` imports are currently treated as package-like references
-- Composer autoload / PSR namespace resolution is not implemented yet
+- PSR-4 resolution currently maps class-like namespace imports to file paths only (no symbol/type validation)
+- Composer `autoload.classmap`, `autoload.files`, and non-PSR include conventions are not resolved
 - dynamic include expressions are ignored unless the path is a string literal

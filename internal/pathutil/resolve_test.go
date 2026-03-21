@@ -65,6 +65,69 @@ func TestResolvePHPRelativeImport(t *testing.T) {
 	}
 }
 
+func TestResolvePHPNamespaceImportFromComposerPSR4(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "composer.json"), `{
+  "autoload": {
+    "psr-4": {
+      "App\\\\": "app/"
+    }
+  }
+}`)
+	mustWrite(t, filepath.Join(dir, "app", "Domain", "User.php"), `<?php`)
+	mustWrite(t, filepath.Join(dir, "app", "Infra", "Db.php"), `<?php`)
+
+	wd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(wd) }()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	resolver, err := pathutil.NewResolver(".", config.ProjectSettings{Roots: []string{"app"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, isPkg := resolver.Resolve("app/Domain/User.php", `App\Infra\Db`)
+	if isPkg || resolved != "app/Infra/Db.php" {
+		t.Fatalf("unexpected php namespace resolution: resolved=%s isPkg=%t", resolved, isPkg)
+	}
+
+	resolved, isPkg = resolver.Resolve("app/Domain/User.php", `\App\Infra\Db`)
+	if isPkg || resolved != "app/Infra/Db.php" {
+		t.Fatalf("unexpected leading slash php namespace resolution: resolved=%s isPkg=%t", resolved, isPkg)
+	}
+}
+
+func TestResolvePHPNamespaceImportFromWorkspaceComposerPSR4(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "apps", "api", "composer.json"), `{
+  "autoload-dev": {
+    "psr-4": {
+      "Demo\\\\": ["src/"]
+    }
+  }
+}`)
+	mustWrite(t, filepath.Join(dir, "apps", "api", "src", "Domain", "User.php"), `<?php`)
+	mustWrite(t, filepath.Join(dir, "apps", "api", "src", "Infra", "Db.php"), `<?php`)
+
+	wd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(wd) }()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	resolver, err := pathutil.NewResolver(".", config.ProjectSettings{Roots: []string{"apps/api"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, isPkg := resolver.Resolve("apps/api/src/Domain/User.php", `Demo\Infra\Db`)
+	if isPkg || resolved != "apps/api/src/Infra/Db.php" {
+		t.Fatalf("unexpected workspace composer namespace resolution: resolved=%s isPkg=%t", resolved, isPkg)
+	}
+}
+
 func TestResolveUnresolvedLocalImportsAreNotPackages(t *testing.T) {
 	dir := t.TempDir()
 	mustWrite(t, filepath.Join(dir, "src", "domain", "user.ts"), "export {}")

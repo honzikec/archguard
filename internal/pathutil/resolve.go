@@ -26,6 +26,15 @@ type tsConfigFile struct {
 	} `json:"compilerOptions"`
 }
 
+type composerFile struct {
+	Autoload struct {
+		PSR4 map[string]any `json:"psr-4"`
+	} `json:"autoload"`
+	AutoloadDev struct {
+		PSR4 map[string]any `json:"psr-4"`
+	} `json:"autoload-dev"`
+}
+
 func NewResolver(root string, project config.ProjectSettings) (*Resolver, error) {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
@@ -46,6 +55,9 @@ func NewResolver(root string, project config.ProjectSettings) (*Resolver, error)
 		if err := r.loadTSConfig(tsconfigPath); err != nil {
 			return nil, err
 		}
+	}
+	if err := r.loadComposerMappings(project); err != nil {
+		return nil, err
 	}
 
 	for alias, targets := range project.Aliases {
@@ -107,6 +119,122 @@ func (r *Resolver) loadTSConfig(path string) error {
 		r.aliases[normalizedAlias] = append(r.aliases[normalizedAlias], targets...)
 	}
 	return nil
+}
+
+func (r *Resolver) loadComposerMappings(project config.ProjectSettings) error {
+	seen := map[string]struct{}{}
+	candidates := []string{filepath.Join(r.root, "composer.json")}
+	for _, root := range project.Roots {
+		root = strings.TrimSpace(root)
+		if root == "" || root == "." {
+			continue
+		}
+		candidates = append(candidates, filepath.Join(r.root, root, "composer.json"))
+	}
+
+	for _, candidate := range candidates {
+		abs, err := filepath.Abs(candidate)
+		if err != nil {
+			return err
+		}
+		if _, ok := seen[abs]; ok {
+			continue
+		}
+		seen[abs] = struct{}{}
+		if _, err := os.Stat(abs); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("failed to stat %s: %w", abs, err)
+		}
+		if err := r.loadComposerFile(abs); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *Resolver) loadComposerFile(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("failed to read %s: %w", path, err)
+	}
+	var cfg composerFile
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return fmt.Errorf("failed to parse %s: %w", path, err)
+	}
+	for ns, value := range cfg.Autoload.PSR4 {
+		if err := r.addComposerPSR4(path, ns, value); err != nil {
+			return err
+		}
+	}
+	for ns, value := range cfg.AutoloadDev.PSR4 {
+		if err := r.addComposerPSR4(path, ns, value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *Resolver) addComposerPSR4(composerPath, namespace string, rawTargets any) error {
+	namespace = strings.TrimSpace(namespace)
+	namespace = strings.TrimSuffix(namespace, "\\")
+	namespace = strings.TrimSpace(namespace)
+	if namespace == "" {
+		return nil
+	}
+
+	nsPath := Normalize(strings.ReplaceAll(namespace, "\\", "/"))
+	alias := nsPath + "/*"
+
+	targets, err := composerTargets(rawTargets)
+	if err != nil {
+		return fmt.Errorf("invalid composer psr-4 mapping %q in %s: %w", namespace, composerPath, err)
+	}
+	for _, target := range targets {
+		target = strings.TrimSpace(target)
+		if target == "" {
+			continue
+		}
+		absTarget := target
+		if !filepath.IsAbs(absTarget) {
+			absTarget = filepath.Join(filepath.Dir(composerPath), absTarget)
+		}
+		relTarget, err := filepath.Rel(r.root, absTarget)
+		if err != nil {
+			relTarget = absTarget
+		}
+		normalized := Normalize(relTarget)
+		normalized = strings.TrimSuffix(normalized, "/")
+		if normalized == "." {
+			normalized = ""
+		}
+		if normalized == "" {
+			r.aliases[alias] = append(r.aliases[alias], "*")
+			continue
+		}
+		r.aliases[alias] = append(r.aliases[alias], normalized+"/*")
+	}
+	return nil
+}
+
+func composerTargets(v any) ([]string, error) {
+	switch x := v.(type) {
+	case string:
+		return []string{x}, nil
+	case []any:
+		out := make([]string, 0, len(x))
+		for _, item := range x {
+			s, ok := item.(string)
+			if !ok {
+				return nil, fmt.Errorf("target entry must be string")
+			}
+			out = append(out, s)
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("targets must be string or array of strings")
+	}
 }
 
 func unmarshalJSONC(data []byte, v any) error {
@@ -271,6 +399,7 @@ func (r *Resolver) Resolve(sourceFile, rawImport string) (string, bool) {
 func (r *Resolver) resolveAlias(alias string, targets []string, rawImport string) (string, bool) {
 	alias = Normalize(alias)
 	rawImport = Normalize(rawImport)
+	rawImport = strings.TrimPrefix(rawImport, "/")
 
 	wildcard := strings.Contains(alias, "*")
 	if !wildcard {
