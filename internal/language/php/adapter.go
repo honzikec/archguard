@@ -1,19 +1,17 @@
 package php
 
 import (
+	"context"
 	"os"
-	"regexp"
 	"sort"
 	"strings"
+
+	sitter "github.com/smacker/go-tree-sitter"
+	"github.com/smacker/go-tree-sitter/php"
 
 	"github.com/honzikec/archguard/internal/language/common"
 	"github.com/honzikec/archguard/internal/language/contracts"
 	"github.com/honzikec/archguard/internal/model"
-)
-
-var (
-	reUse            = regexp.MustCompile(`(?m)^\s*use\s+([^;]+);`)
-	reRequireInclude = regexp.MustCompile(`(?m)\b(?:require|require_once|include|include_once)\s*\(?\s*["']([^"']+)["']\s*\)?`)
 )
 
 type Adapter struct{}
@@ -45,11 +43,39 @@ func (Adapter) ParseFile(path string) ([]model.ImportRef, error) {
 	if err != nil {
 		return nil, err
 	}
-	text := string(content)
+
+	parser := sitter.NewParser()
+	defer parser.Close()
+	parser.SetLanguage(php.GetLanguage())
+
+	tree, err := parser.ParseCtx(context.Background(), nil, content)
+	if err != nil || tree == nil || tree.RootNode() == nil {
+		return nil, nil
+	}
+	defer tree.Close()
 
 	refs := make([]model.ImportRef, 0)
-	refs = append(refs, parseUseImports(path, content, text)...)
-	refs = append(refs, parseRequireIncludes(path, content, text)...)
+	var walk func(*sitter.Node)
+	walk = func(node *sitter.Node) {
+		if node == nil {
+			return
+		}
+
+		switch node.Type() {
+		case "namespace_use_declaration":
+			refs = append(refs, parseNamespaceUseDeclaration(path, node, content)...)
+		case "include_expression", "include_once_expression", "require_expression", "require_once_expression":
+			if ref, ok := parseIncludeLikeExpression(path, node, content); ok {
+				refs = append(refs, ref)
+			}
+		}
+
+		for i := 0; i < int(node.NamedChildCount()); i++ {
+			walk(node.NamedChild(i))
+		}
+	}
+
+	walk(tree.RootNode())
 
 	sort.Slice(refs, func(i, j int) bool {
 		if refs[i].Line != refs[j].Line {
@@ -67,61 +93,137 @@ func (Adapter) ParseFile(path string) ([]model.ImportRef, error) {
 	return refs, nil
 }
 
-func parseUseImports(path string, content []byte, text string) []model.ImportRef {
-	idx := reUse.FindAllStringSubmatchIndex(text, -1)
-	refs := make([]model.ImportRef, 0, len(idx))
-	for _, m := range idx {
-		if len(m) < 4 {
+func parseNamespaceUseDeclaration(path string, node *sitter.Node, content []byte) []model.ImportRef {
+	prefix := ""
+	if groupPrefix := findNamedChildByType(node, "namespace_name"); groupPrefix != nil {
+		prefix = normalizePHPNamespace(groupPrefix.Content(content))
+	}
+
+	clauses := findNamedChildrenByType(node, "namespace_use_clause")
+	groupClauses := make([]*sitter.Node, 0)
+	for _, group := range findNamedChildrenByType(node, "namespace_use_group") {
+		groupClauses = append(groupClauses, findNamedChildrenByType(group, "namespace_use_group_clause")...)
+	}
+
+	out := make([]model.ImportRef, 0, len(clauses)+len(groupClauses))
+	for _, clause := range clauses {
+		raw := extractUsePath(clause, content)
+		raw = normalizePHPNamespace(raw)
+		if raw == "" {
 			continue
 		}
-		raw := strings.TrimSpace(text[m[2]:m[3]])
-		line, col := lineCol(content, m[0])
-		refs = append(refs, model.ImportRef{
+		out = append(out, model.ImportRef{
 			SourceFile:      path,
 			RawImport:       raw,
 			IsPackageImport: true,
-			Line:            line,
-			Column:          col,
+			Line:            int(clause.StartPoint().Row) + 1,
+			Column:          int(clause.StartPoint().Column) + 1,
 			Kind:            "php_use",
 		})
 	}
-	return refs
-}
 
-func parseRequireIncludes(path string, content []byte, text string) []model.ImportRef {
-	idx := reRequireInclude.FindAllStringSubmatchIndex(text, -1)
-	refs := make([]model.ImportRef, 0, len(idx))
-	for _, m := range idx {
-		if len(m) < 4 {
+	for _, clause := range groupClauses {
+		item := extractUsePath(clause, content)
+		item = normalizePHPNamespace(item)
+		if item == "" {
 			continue
 		}
-		raw := strings.TrimSpace(text[m[2]:m[3]])
-		line, col := lineCol(content, m[0])
-		refs = append(refs, model.ImportRef{
+		raw := item
+		if prefix != "" {
+			raw = prefix + `\` + item
+		}
+		out = append(out, model.ImportRef{
 			SourceFile:      path,
 			RawImport:       raw,
-			IsPackageImport: !strings.HasPrefix(raw, ".") && !strings.HasPrefix(raw, "/"),
-			Line:            line,
-			Column:          col,
-			Kind:            "php_include",
+			IsPackageImport: true,
+			Line:            int(clause.StartPoint().Row) + 1,
+			Column:          int(clause.StartPoint().Column) + 1,
+			Kind:            "php_use",
 		})
 	}
-	return refs
+
+	return out
 }
 
-func lineCol(content []byte, index int) (int, int) {
-	if index < 0 {
-		return 1, 1
-	}
-	line := 1
-	col := 1
-	for i := 0; i < len(content) && i < index; i++ {
-		if content[i] == '\n' {
-			line++
-			col = 1
-		} else {
-			col++
+func parseIncludeLikeExpression(path string, node *sitter.Node, content []byte) (model.ImportRef, bool) {
+	raw := ""
+	var walk func(*sitter.Node)
+	walk = func(n *sitter.Node) {
+		if n == nil || raw != "" {
+			return
+		}
+		switch n.Type() {
+		case "string", "encapsed_string":
+			raw = trimStringLiteral(n.Content(content))
+			return
+		}
+		for i := 0; i < int(n.NamedChildCount()); i++ {
+			walk(n.NamedChild(i))
 		}
 	}
-	return line, col
+	walk(node)
+
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return model.ImportRef{}, false
+	}
+	return model.ImportRef{
+		SourceFile:      path,
+		RawImport:       raw,
+		IsPackageImport: !strings.HasPrefix(raw, ".") && !strings.HasPrefix(raw, "/"),
+		Line:            int(node.StartPoint().Row) + 1,
+		Column:          int(node.StartPoint().Column) + 1,
+		Kind:            "php_include",
+	}, true
+}
+
+func extractUsePath(node *sitter.Node, content []byte) string {
+	if node == nil {
+		return ""
+	}
+	for i := 0; i < int(node.NamedChildCount()); i++ {
+		child := node.NamedChild(i)
+		switch child.Type() {
+		case "qualified_name", "namespace_name", "name":
+			return child.Content(content)
+		}
+	}
+	return ""
+}
+
+func findNamedChildByType(node *sitter.Node, typeName string) *sitter.Node {
+	for i := 0; i < int(node.NamedChildCount()); i++ {
+		child := node.NamedChild(i)
+		if child.Type() == typeName {
+			return child
+		}
+	}
+	return nil
+}
+
+func findNamedChildrenByType(node *sitter.Node, typeName string) []*sitter.Node {
+	out := make([]*sitter.Node, 0)
+	for i := 0; i < int(node.NamedChildCount()); i++ {
+		child := node.NamedChild(i)
+		if child.Type() == typeName {
+			out = append(out, child)
+		}
+	}
+	return out
+}
+
+func trimStringLiteral(v string) string {
+	v = strings.TrimSpace(v)
+	v = strings.TrimPrefix(v, "\"")
+	v = strings.TrimSuffix(v, "\"")
+	v = strings.TrimPrefix(v, "'")
+	v = strings.TrimSuffix(v, "'")
+	return v
+}
+
+func normalizePHPNamespace(v string) string {
+	v = strings.TrimSpace(v)
+	v = strings.TrimPrefix(v, `\`)
+	v = strings.TrimSuffix(v, `\`)
+	return strings.TrimSpace(v)
 }

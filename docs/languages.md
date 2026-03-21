@@ -9,7 +9,7 @@ ArchGuard now routes file discovery and import parsing through a language adapte
   - import extraction: deterministic static parsing via existing parser
 - `php`
   - supported files: `.php`, `.phtml`
-  - import extraction: deterministic regex-based extraction of `use` and `require/include` string literals
+  - import extraction: deterministic Tree-sitter AST extraction of `use` declarations and static `require/include` string literals
   - path resolution: relative include/require plus Composer `autoload.psr-4` / `autoload-dev.psr-4` namespace mapping
 
 ## Selection model
