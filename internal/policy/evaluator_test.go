@@ -75,6 +75,36 @@ func TestEvaluate_NoPackage(t *testing.T) {
 	}
 }
 
+func TestEvaluate_NoPackageMatchesSubpathImport(t *testing.T) {
+	cfg := &config.Config{
+		Version: 1,
+		Rules: []config.Rule{{
+			ID:       "AG-2A",
+			Kind:     config.KindNoPackage,
+			Severity: config.SeverityWarning,
+			Scope:    []string{"src/domain/**"},
+			Target:   []string{"react-dom"},
+		}},
+	}
+	imports := []model.ImportRef{{
+		SourceFile:      "src/domain/user.ts",
+		RawImport:       "react-dom/client",
+		IsPackageImport: true,
+		Line:            1,
+		Column:          1,
+	}}
+	files := []string{"src/domain/user.ts"}
+	g := graph.Build(imports, files)
+
+	findings, err := policy.Evaluate(cfg, imports, files, g)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding for subpath package import, got %d", len(findings))
+	}
+}
+
 func TestEvaluate_FilePattern(t *testing.T) {
 	cfg := &config.Config{
 		Version: 1,

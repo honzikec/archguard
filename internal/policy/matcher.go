@@ -6,6 +6,7 @@ import (
 
 	"github.com/honzikec/archguard/internal/config"
 	"github.com/honzikec/archguard/internal/pathutil"
+	"github.com/honzikec/archguard/internal/pkgid"
 )
 
 func compileRules(rules []config.Rule) ([]compiledRule, error) {
@@ -45,8 +46,12 @@ func isExcepted(excepts []string, source, target string) bool {
 }
 
 func packageMatches(targets []string, pkg string) bool {
+	canonical := pkgid.Canonical(pkg)
 	for _, t := range targets {
 		if t == pkg || pathutil.MatchGlob(t, pkg) {
+			return true
+		}
+		if canonical != pkg && (t == canonical || pathutil.MatchGlob(t, canonical)) {
 			return true
 		}
 	}

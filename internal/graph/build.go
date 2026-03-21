@@ -4,6 +4,7 @@ import (
 	"path"
 
 	"github.com/honzikec/archguard/internal/model"
+	"github.com/honzikec/archguard/internal/pkgid"
 )
 
 type Graph struct {
@@ -35,18 +36,22 @@ func Build(imports []model.ImportRef, allFiles []string) *Graph {
 	for _, imp := range imports {
 		sourceSubtree := path.Dir(imp.SourceFile)
 		if imp.IsPackageImport {
+			pkg := pkgid.Canonical(imp.RawImport)
+			if pkg == "" {
+				continue
+			}
 			if _, ok := g.PackageEdges[sourceSubtree]; !ok {
 				g.PackageEdges[sourceSubtree] = map[string]int{}
 			}
 			if _, ok := seenPackages[sourceSubtree]; !ok {
 				seenPackages[sourceSubtree] = map[string]map[string]struct{}{}
 			}
-			if _, ok := seenPackages[sourceSubtree][imp.RawImport]; !ok {
-				seenPackages[sourceSubtree][imp.RawImport] = map[string]struct{}{}
+			if _, ok := seenPackages[sourceSubtree][pkg]; !ok {
+				seenPackages[sourceSubtree][pkg] = map[string]struct{}{}
 			}
-			if _, ok := seenPackages[sourceSubtree][imp.RawImport][imp.SourceFile]; !ok {
-				seenPackages[sourceSubtree][imp.RawImport][imp.SourceFile] = struct{}{}
-				g.PackageEdges[sourceSubtree][imp.RawImport]++
+			if _, ok := seenPackages[sourceSubtree][pkg][imp.SourceFile]; !ok {
+				seenPackages[sourceSubtree][pkg][imp.SourceFile] = struct{}{}
+				g.PackageEdges[sourceSubtree][pkg]++
 			}
 			continue
 		}
