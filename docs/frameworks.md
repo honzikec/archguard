@@ -55,7 +55,8 @@ Shared helpers:
    - `archguard init profile --name my_framework`
 2. Implement profile logic only in its package.
 3. Wire registration once in `internal/framework/registry.go`.
-4. Add profile-local tests + conformance coverage.
+4. Add profile-local tests + pass shared conformance suite:
+   - `go test ./internal/framework -run TestFrameworkProfilesConformance`
 5. Update `docs/config.md`, `docs/cli.md`, and this file.
 
 ## Guardrails

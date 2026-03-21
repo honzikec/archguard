@@ -29,6 +29,8 @@ ArchGuard now routes file discovery and import parsing through a language adapte
 - generate a starter adapter package with:
   - `archguard init adapter --name <adapter_id>`
 - this creates `adapter.go` + `adapter_test.go`; wire it in `internal/language/adapter.go` and update `docs/config.md`/validation enums.
+- all adapters must pass shared contract conformance:
+  - `go test ./internal/language -run TestLanguageAdaptersConformance`
 
 ## Current PHP limitations
 

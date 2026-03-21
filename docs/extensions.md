@@ -36,3 +36,11 @@ Every new profile/adapter must satisfy:
 - deterministic output on repeated runs
 - idempotent normalization for frameworks
 - no regressions in `check` behavior for existing JS/TS repositories
+
+Shared contract suites:
+- framework profiles: `go test ./internal/framework -run TestFrameworkProfilesConformance`
+- language adapters: `go test ./internal/language -run TestLanguageAdaptersConformance`
+
+Harness implementation:
+- `internal/conformance/framework.go`
+- `internal/conformance/language.go`
