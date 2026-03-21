@@ -191,6 +191,71 @@ func TestProposeNoPackageRequiresGlobalUsageForZeroViolationCandidates(t *testin
 	}
 }
 
+func TestProposeNoPackageSkipsHighlySharedZeroViolationTargets(t *testing.T) {
+	files := make([]string, 0)
+	imports := make([]model.ImportRef, 0)
+	// 8 source subtrees, package used in 7 of them => spread too broad for zero-violation candidate.
+	for s := 0; s < 8; s++ {
+		dir := fmt.Sprintf("src/s%d", s)
+		for i := 0; i < 20; i++ {
+			file := fmt.Sprintf("%s/f%d.ts", dir, i)
+			files = append(files, file)
+			if s < 7 {
+				imports = append(imports, model.ImportRef{
+					SourceFile:      file,
+					RawImport:       "rxjs",
+					IsPackageImport: true,
+				})
+			}
+		}
+	}
+
+	g := graph.Build(imports, files)
+	candidates := miner.Propose(g, files, miner.Options{
+		MinSupport:    20,
+		MaxPrevalence: 1,
+	})
+	for _, c := range candidates {
+		if c.Kind == config.KindNoPackage && len(c.Scope) > 0 && c.Scope[0] == "src/s7/**" && len(c.Target) > 0 && c.Target[0] == "rxjs" {
+			t.Fatalf("expected highly shared zero-violation no_package candidate to be skipped, got %+v", c)
+		}
+	}
+}
+
+func TestProposeNoImportSkipsHighlySharedZeroViolationTargets(t *testing.T) {
+	files := make([]string, 0)
+	imports := make([]model.ImportRef, 0)
+	for i := 0; i < 20; i++ {
+		files = append(files, fmt.Sprintf("src/common/f%d.ts", i))
+	}
+	// 8 source subtrees, 7 import common, 1 does not.
+	for s := 0; s < 8; s++ {
+		dir := fmt.Sprintf("src/s%d", s)
+		for i := 0; i < 20; i++ {
+			file := fmt.Sprintf("%s/f%d.ts", dir, i)
+			files = append(files, file)
+			if s < 7 {
+				imports = append(imports, model.ImportRef{
+					SourceFile:      file,
+					ResolvedPath:    fmt.Sprintf("src/common/f%d.ts", i),
+					IsPackageImport: false,
+				})
+			}
+		}
+	}
+
+	g := graph.Build(imports, files)
+	candidates := miner.Propose(g, files, miner.Options{
+		MinSupport:    20,
+		MaxPrevalence: 1,
+	})
+	for _, c := range candidates {
+		if c.Kind == config.KindNoImport && len(c.Scope) > 0 && c.Scope[0] == "src/s7/**" && len(c.Target) > 0 && c.Target[0] == "src/common/**" {
+			t.Fatalf("expected highly shared zero-violation no_import candidate to be skipped, got %+v", c)
+		}
+	}
+}
+
 func TestProposeCapsCandidatesPerKind(t *testing.T) {
 	files := make([]string, 0)
 	imports := make([]model.ImportRef, 0)

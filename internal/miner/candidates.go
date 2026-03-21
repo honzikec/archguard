@@ -70,12 +70,28 @@ func Propose(g *graph.Graph, allFiles []string, opts Options) []Candidate {
 func proposeNoImport(g *graph.Graph, opts Options) []Candidate {
 	candidates := make([]Candidate, 0)
 	globalTargetUsage := map[string]int{}
+	targetSourceSpread := map[string]int{}
 	for _, targets := range g.Edges {
 		for targetSubtree, count := range targets {
 			globalTargetUsage[targetSubtree] += count
 		}
 	}
+	for sourceSubtree, targets := range g.Edges {
+		_ = sourceSubtree
+		for targetSubtree, count := range targets {
+			if count > 0 {
+				targetSourceSpread[targetSubtree]++
+			}
+		}
+	}
 	minGlobalUsage := minZeroViolationTargetUsage(opts.MinSupport)
+	activeSources := 0
+	for _, totalFiles := range g.Nodes {
+		if totalFiles >= opts.MinSupport {
+			activeSources++
+		}
+	}
+	maxSpread := maxZeroViolationSourceSpread(activeSources)
 
 	for sourceSubtree, totalFiles := range g.Nodes {
 		if totalFiles < opts.MinSupport {
@@ -96,6 +112,10 @@ func proposeNoImport(g *graph.Graph, opts Options) []Candidate {
 			}
 			if violations == 0 && targetUsage < minGlobalUsage {
 				// Zero-violation rules are only useful when the target is materially used elsewhere.
+				continue
+			}
+			if violations == 0 && targetSourceSpread[targetSubtree] > maxSpread {
+				// Highly shared targets produce broad low-signal zero-violation candidates.
 				continue
 			}
 			prevalence := float64(violations) / float64(totalFiles)
@@ -122,13 +142,24 @@ func proposeNoPackage(g *graph.Graph, opts Options) []Candidate {
 	candidates := make([]Candidate, 0)
 	allPackages := map[string]struct{}{}
 	globalPackageUsage := map[string]int{}
+	packageSourceSpread := map[string]int{}
 	for _, packages := range g.PackageEdges {
 		for pkg, count := range packages {
 			allPackages[pkg] = struct{}{}
 			globalPackageUsage[pkg] += count
+			if count > 0 {
+				packageSourceSpread[pkg]++
+			}
 		}
 	}
 	minGlobalUsage := minZeroViolationTargetUsage(opts.MinSupport)
+	activeSources := 0
+	for _, totalFiles := range g.Nodes {
+		if totalFiles >= opts.MinSupport {
+			activeSources++
+		}
+	}
+	maxSpread := maxZeroViolationSourceSpread(activeSources)
 
 	for sourceSubtree, totalFiles := range g.Nodes {
 		if totalFiles < opts.MinSupport {
@@ -144,6 +175,9 @@ func proposeNoPackage(g *graph.Graph, opts Options) []Candidate {
 				violations = edges[pkg]
 			}
 			if violations == 0 && pkgUsage < minGlobalUsage {
+				continue
+			}
+			if violations == 0 && packageSourceSpread[pkg] > maxSpread {
 				continue
 			}
 			prevalence := float64(violations) / float64(totalFiles)
@@ -336,6 +370,17 @@ func minZeroViolationTargetUsage(minSupport int) int {
 		return 1
 	}
 	return threshold
+}
+
+func maxZeroViolationSourceSpread(totalSources int) int {
+	if totalSources <= 4 {
+		return totalSources
+	}
+	spread := totalSources / 4
+	if spread < 3 {
+		spread = 3
+	}
+	return spread
 }
 
 func confidence(prevalence float64, support int) string {
