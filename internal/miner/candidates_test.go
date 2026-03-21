@@ -417,16 +417,16 @@ func TestProposeNoImportCapsZeroViolationPerScope(t *testing.T) {
 
 func TestProposeNoPackageCapsZeroViolationPerScope(t *testing.T) {
 	nodes := map[string]int{
-		"src/domain": 20,
+		"domain": 20,
 	}
 	packageEdges := map[string]map[string]int{}
 	fileEdges := map[string]map[string]struct{}{
-		"src/domain/f0.ts": {
-			"src/domain/f1.ts": {},
+		"domain/f0.ts": {
+			"domain/f1.ts": {},
 		},
 	}
 	for i := 0; i < 10; i++ {
-		source := fmt.Sprintf("src/s%d", i)
+		source := fmt.Sprintf("s%d", i)
 		nodes[source] = 20
 		packageEdges[source] = map[string]int{
 			fmt.Sprintf("pkg%d", i): 20,
@@ -448,12 +448,315 @@ func TestProposeNoPackageCapsZeroViolationPerScope(t *testing.T) {
 
 	count := 0
 	for _, c := range candidates {
-		if c.Kind == config.KindNoPackage && len(c.Scope) > 0 && c.Scope[0] == "src/domain/**" && c.Violations == 0 {
+		if c.Kind == config.KindNoPackage && len(c.Scope) > 0 && c.Scope[0] == "domain/**" && c.Violations == 0 {
 			count++
 		}
 	}
 	if count != 5 {
-		t.Fatalf("expected zero-violation no_package candidates for src/domain to be capped at 5, got %d", count)
+		t.Fatalf("expected zero-violation no_package candidates for domain to be capped at 5, got %d", count)
+	}
+}
+
+func TestProposeNoImportCapsZeroViolationPerTarget(t *testing.T) {
+	files := make([]string, 0)
+	imports := make([]model.ImportRef, 0)
+
+	for i := 0; i < 20; i++ {
+		files = append(files, fmt.Sprintf("target/f%d.ts", i))
+	}
+	for i := 0; i < 20; i++ {
+		source := fmt.Sprintf("importer/f%d.ts", i)
+		files = append(files, source)
+		imports = append(imports, model.ImportRef{
+			SourceFile:      source,
+			ResolvedPath:    fmt.Sprintf("target/f%d.ts", i),
+			IsPackageImport: false,
+		})
+	}
+	for s := 0; s < 15; s++ {
+		for i := 0; i < 20; i++ {
+			file := fmt.Sprintf("s%d/f%d.ts", s, i)
+			files = append(files, file)
+			imports = append(imports, model.ImportRef{
+				SourceFile:      file,
+				RawImport:       "left-pad",
+				IsPackageImport: true,
+			})
+		}
+	}
+
+	g := graph.Build(imports, files)
+	candidates := miner.Propose(g, files, miner.Options{
+		MinSupport:    20,
+		MaxPrevalence: 1,
+	})
+
+	count := 0
+	for _, c := range candidates {
+		if c.Kind != config.KindNoImport || c.Violations != 0 || len(c.Target) == 0 {
+			continue
+		}
+		if c.Target[0] == "target/**" {
+			count++
+		}
+	}
+	if count != 10 {
+		t.Fatalf("expected zero-violation no_import candidates for target/** to be capped at 10, got %d", count)
+	}
+}
+
+func TestProposeNoPackageCapsZeroViolationPerTarget(t *testing.T) {
+	files := make([]string, 0)
+	imports := make([]model.ImportRef, 0)
+
+	for i := 0; i < 20; i++ {
+		source := fmt.Sprintf("importer/f%d.ts", i)
+		files = append(files, source)
+		imports = append(imports, model.ImportRef{
+			SourceFile:      source,
+			RawImport:       "rxjs",
+			IsPackageImport: true,
+		})
+	}
+	for s := 0; s < 15; s++ {
+		for i := 0; i < 20; i++ {
+			file := fmt.Sprintf("s%d/f%d.ts", s, i)
+			files = append(files, file)
+			imports = append(imports, model.ImportRef{
+				SourceFile:      file,
+				ResolvedPath:    fmt.Sprintf("s%d/local.ts", s),
+				IsPackageImport: false,
+			})
+		}
+	}
+
+	g := graph.Build(imports, files)
+	candidates := miner.Propose(g, files, miner.Options{
+		MinSupport:    20,
+		MaxPrevalence: 1,
+	})
+
+	count := 0
+	for _, c := range candidates {
+		if c.Kind != config.KindNoPackage || c.Violations != 0 || len(c.Target) == 0 {
+			continue
+		}
+		if c.Target[0] == "rxjs" {
+			count++
+		}
+	}
+	if count != 10 {
+		t.Fatalf("expected zero-violation no_package candidates for rxjs to be capped at 10, got %d", count)
+	}
+}
+
+func TestProposeCapsCandidatesPerKindPrefersViolatingCandidates(t *testing.T) {
+	files := []string{
+		"src/a/f0.ts",
+		"src/b/f0.ts",
+		"src/b/helper.ts",
+		"src/c/f0.ts",
+		"src/d/f0.ts",
+	}
+	imports := []model.ImportRef{
+		{
+			SourceFile:      "src/a/f0.ts",
+			RawImport:       "axios",
+			IsPackageImport: true,
+		},
+		{
+			SourceFile:      "src/b/f0.ts",
+			ResolvedPath:    "src/b/helper.ts",
+			IsPackageImport: false,
+		},
+		{
+			SourceFile:      "src/c/f0.ts",
+			ResolvedPath:    "src/d/f0.ts",
+			IsPackageImport: false,
+		},
+		{
+			SourceFile:      "src/d/f0.ts",
+			ResolvedPath:    "src/d/f0.ts",
+			IsPackageImport: false,
+		},
+	}
+
+	g := graph.Build(imports, files)
+	candidates := miner.Propose(g, files, miner.Options{
+		MinSupport:           1,
+		MaxPrevalence:        1,
+		MaxCandidatesPerKind: 1,
+	})
+
+	var noImport, noPackage *miner.Candidate
+	for i := range candidates {
+		c := &candidates[i]
+		if c.Kind == config.KindNoImport {
+			noImport = c
+		}
+		if c.Kind == config.KindNoPackage {
+			noPackage = c
+		}
+	}
+	if noImport == nil {
+		t.Fatalf("expected capped no_import candidate")
+	}
+	if noImport.Violations == 0 {
+		t.Fatalf("expected capped no_import candidate to prefer violations>0, got %+v", *noImport)
+	}
+	if noPackage == nil {
+		t.Fatalf("expected capped no_package candidate")
+	}
+	if noPackage.Violations == 0 {
+		t.Fatalf("expected capped no_package candidate to prefer violations>0, got %+v", *noPackage)
+	}
+}
+
+func TestProposeAggregatesSiblingNoPackageScopes(t *testing.T) {
+	files := make([]string, 0)
+	imports := make([]model.ImportRef, 0)
+
+	for i := 0; i < 20; i++ {
+		files = append(files, fmt.Sprintf("src/app/a/f%d.ts", i))
+		files = append(files, fmt.Sprintf("src/app/b/f%d.ts", i))
+		files = append(files, fmt.Sprintf("src/importer/f%d.ts", i))
+		imports = append(imports, model.ImportRef{
+			SourceFile:      fmt.Sprintf("src/app/a/f%d.ts", i),
+			RawImport:       "left-pad",
+			IsPackageImport: true,
+		})
+		imports = append(imports, model.ImportRef{
+			SourceFile:      fmt.Sprintf("src/app/b/f%d.ts", i),
+			RawImport:       "left-pad",
+			IsPackageImport: true,
+		})
+		imports = append(imports, model.ImportRef{
+			SourceFile:      fmt.Sprintf("src/importer/f%d.ts", i),
+			RawImport:       "axios",
+			IsPackageImport: true,
+		})
+	}
+
+	g := graph.Build(imports, files)
+	candidates := miner.Propose(g, files, miner.Options{
+		MinSupport:           20,
+		MaxPrevalence:        1,
+		MaxCandidatesPerKind: 200,
+	})
+
+	foundParent := false
+	foundChildA := false
+	foundChildB := false
+	for _, c := range candidates {
+		if c.Kind != config.KindNoPackage || len(c.Scope) == 0 || len(c.Target) == 0 {
+			continue
+		}
+		if c.Target[0] != "axios" {
+			continue
+		}
+		switch c.Scope[0] {
+		case "src/app/**":
+			foundParent = true
+		case "src/app/a/**":
+			foundChildA = true
+		case "src/app/b/**":
+			foundChildB = true
+		}
+	}
+	if !foundParent {
+		t.Fatalf("expected aggregated parent no_package scope src/app/** for target axios")
+	}
+	if foundChildA || foundChildB {
+		t.Fatalf("expected child scopes src/app/a/** and src/app/b/** to be replaced after aggregation")
+	}
+}
+
+func TestProposeAggregatesSiblingNoImportScopes(t *testing.T) {
+	files := make([]string, 0)
+	imports := make([]model.ImportRef, 0)
+
+	for i := 0; i < 20; i++ {
+		files = append(files, fmt.Sprintf("src/app/a/f%d.ts", i))
+		files = append(files, fmt.Sprintf("src/app/b/f%d.ts", i))
+		files = append(files, fmt.Sprintf("src/consumer/f%d.ts", i))
+		files = append(files, fmt.Sprintf("src/infra/f%d.ts", i))
+		imports = append(imports, model.ImportRef{
+			SourceFile:      fmt.Sprintf("src/app/a/f%d.ts", i),
+			ResolvedPath:    fmt.Sprintf("src/app/a/local%d.ts", i),
+			IsPackageImport: false,
+		})
+		imports = append(imports, model.ImportRef{
+			SourceFile:      fmt.Sprintf("src/app/b/f%d.ts", i),
+			ResolvedPath:    fmt.Sprintf("src/app/b/local%d.ts", i),
+			IsPackageImport: false,
+		})
+		imports = append(imports, model.ImportRef{
+			SourceFile:      fmt.Sprintf("src/consumer/f%d.ts", i),
+			ResolvedPath:    fmt.Sprintf("src/infra/f%d.ts", i),
+			IsPackageImport: false,
+		})
+	}
+
+	g := graph.Build(imports, files)
+	candidates := miner.Propose(g, files, miner.Options{
+		MinSupport:           20,
+		MaxPrevalence:        1,
+		MaxCandidatesPerKind: 200,
+	})
+
+	foundParent := false
+	foundChildA := false
+	foundChildB := false
+	for _, c := range candidates {
+		if c.Kind != config.KindNoImport || len(c.Scope) == 0 || len(c.Target) == 0 {
+			continue
+		}
+		if c.Target[0] != "src/infra/**" {
+			continue
+		}
+		switch c.Scope[0] {
+		case "src/app/**":
+			foundParent = true
+		case "src/app/a/**":
+			foundChildA = true
+		case "src/app/b/**":
+			foundChildB = true
+		}
+	}
+	if !foundParent {
+		t.Fatalf("expected aggregated parent no_import scope src/app/** for target src/infra/**")
+	}
+	if foundChildA || foundChildB {
+		t.Fatalf("expected child scopes src/app/a/** and src/app/b/** to be replaced after aggregation")
+	}
+}
+
+func TestProposeCollectsDebugDropCounters(t *testing.T) {
+	files := make([]string, 0)
+	imports := make([]model.ImportRef, 0)
+	for i := 0; i < 20; i++ {
+		files = append(files, fmt.Sprintf("src/a/f%d.ts", i))
+		files = append(files, fmt.Sprintf("src/b/f%d.ts", i))
+		imports = append(imports, model.ImportRef{
+			SourceFile:      fmt.Sprintf("src/a/f%d.ts", i),
+			ResolvedPath:    fmt.Sprintf("src/a/local%d.ts", i),
+			IsPackageImport: false,
+		})
+	}
+
+	stats := miner.NewDebugStats()
+	_ = miner.Propose(graph.Build(imports, files), files, miner.Options{
+		MinSupport:           20,
+		MaxPrevalence:        1,
+		MaxCandidatesPerKind: 200,
+		DebugStats:           stats,
+	})
+
+	if len(stats.Dropped) == 0 {
+		t.Fatalf("expected debug drop counters to be populated")
+	}
+	if stats.Dropped["no_import:target_never_observed"] == 0 {
+		t.Fatalf("expected no_import:target_never_observed drop counter to be > 0, got %+v", stats.Dropped)
 	}
 }
 

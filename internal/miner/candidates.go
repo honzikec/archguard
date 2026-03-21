@@ -16,6 +16,36 @@ type Options struct {
 	MinSupport           int
 	MaxPrevalence        float64
 	MaxCandidatesPerKind int
+	DebugStats           *DebugStats
+}
+
+type DebugStats struct {
+	Dropped map[string]int
+}
+
+func NewDebugStats() *DebugStats {
+	return &DebugStats{Dropped: map[string]int{}}
+}
+
+func (s *DebugStats) addDrop(kind, reason string) {
+	if s == nil {
+		return
+	}
+	if s.Dropped == nil {
+		s.Dropped = map[string]int{}
+	}
+	s.Dropped[dropKey(kind, reason)]++
+}
+
+func dropKey(kind, reason string) string {
+	return kind + ":" + reason
+}
+
+func recordDrop(opts Options, kind, reason string) {
+	if opts.DebugStats == nil {
+		return
+	}
+	opts.DebugStats.addDrop(kind, reason)
 }
 
 type Candidate struct {
@@ -44,8 +74,12 @@ func Propose(g *graph.Graph, allFiles []string, opts Options) []Candidate {
 		opts.MaxCandidatesPerKind = 200
 	}
 
-	noImport := capCandidates(proposeNoImport(g, opts), opts.MaxCandidatesPerKind)
-	noPackage := capCandidates(proposeNoPackage(g, opts), opts.MaxCandidatesPerKind)
+	noImportRaw := proposeNoImport(g, opts)
+	noImportRaw = aggregateZeroViolationSiblingScopes(noImportRaw, opts)
+	noImport := capCandidates(noImportRaw, opts.MaxCandidatesPerKind)
+	noPackageRaw := proposeNoPackage(g, opts)
+	noPackageRaw = aggregateZeroViolationSiblingScopes(noPackageRaw, opts)
+	noPackage := capCandidates(noPackageRaw, opts.MaxCandidatesPerKind)
 	filePattern := capCandidates(proposeFilePattern(allFiles, opts), opts.MaxCandidatesPerKind)
 	noCycle := capCandidates(proposeNoCycle(g, opts), opts.MaxCandidatesPerKind)
 
@@ -95,7 +129,9 @@ func proposeNoImport(g *graph.Graph, opts Options) []Candidate {
 	}
 	maxSpread := maxZeroViolationSourceSpread(activeSources)
 	maxZeroPerScope := maxZeroViolationCandidatesPerScope(opts.MinSupport)
+	maxZeroPerTarget := maxZeroViolationCandidatesPerTarget(opts.MinSupport)
 	zeroViolationBySource := map[string]int{}
+	zeroViolationByTarget := map[string]int{}
 	for _, sourceSubtree := range sourceSubtrees {
 		totalFiles := g.Nodes[sourceSubtree]
 		if totalFiles < opts.MinSupport {
@@ -109,6 +145,7 @@ func proposeNoImport(g *graph.Graph, opts Options) []Candidate {
 			targetUsage := globalTargetUsage[targetSubtree]
 			if targetUsage == 0 {
 				// Skip never-observed targets to avoid combinatorial no-signal rules.
+				recordDrop(opts, config.KindNoImport, "target_never_observed")
 				continue
 			}
 			violations := 0
@@ -117,29 +154,40 @@ func proposeNoImport(g *graph.Graph, opts Options) []Candidate {
 			}
 			if violations == 0 && targetUsage < minGlobalUsage {
 				// Zero-violation rules are only useful when the target is materially used elsewhere.
+				recordDrop(opts, config.KindNoImport, "zero_low_global_usage")
 				continue
 			}
 			if violations == 0 && sourceImportCount == 0 {
 				// Inactive source scopes (no observed imports) produce low-signal blanket candidates.
+				recordDrop(opts, config.KindNoImport, "zero_inactive_source")
 				continue
 			}
 			if violations == 0 && isLowSignalSourceScope(sourceSubtree) {
+				recordDrop(opts, config.KindNoImport, "zero_low_signal_scope")
 				continue
 			}
 			if violations == 0 && targetSourceSpread[targetSubtree] > maxSpread {
 				// Highly shared targets produce broad low-signal zero-violation candidates.
+				recordDrop(opts, config.KindNoImport, "zero_target_over_spread")
 				continue
 			}
 			if violations == 0 && zeroViolationBySource[sourceSubtree] >= maxZeroPerScope {
 				// Keep zero-violation output diverse across scopes instead of saturating one scope.
+				recordDrop(opts, config.KindNoImport, "zero_source_cap")
+				continue
+			}
+			if violations == 0 && zeroViolationByTarget[targetSubtree] >= maxZeroPerTarget {
+				recordDrop(opts, config.KindNoImport, "zero_target_cap")
 				continue
 			}
 			prevalence := float64(violations) / float64(totalFiles)
 			if prevalence > opts.MaxPrevalence {
+				recordDrop(opts, config.KindNoImport, "prevalence_over_limit")
 				continue
 			}
 			if violations == 0 {
 				zeroViolationBySource[sourceSubtree]++
+				zeroViolationByTarget[targetSubtree]++
 			}
 			candidates = append(candidates, Candidate{
 				Kind:       config.KindNoImport,
@@ -182,7 +230,9 @@ func proposeNoPackage(g *graph.Graph, opts Options) []Candidate {
 	}
 	maxSpread := maxZeroViolationSourceSpread(activeSources)
 	maxZeroPerScope := maxZeroViolationCandidatesPerScope(opts.MinSupport)
+	maxZeroPerTarget := maxZeroViolationCandidatesPerTarget(opts.MinSupport)
 	zeroViolationBySource := map[string]int{}
+	zeroViolationByTarget := map[string]int{}
 	packages := sortedSetKeys(allPackages)
 	for _, sourceSubtree := range sourceSubtrees {
 		totalFiles := g.Nodes[sourceSubtree]
@@ -193,6 +243,7 @@ func proposeNoPackage(g *graph.Graph, opts Options) []Candidate {
 		for _, pkg := range packages {
 			pkgUsage := globalPackageUsage[pkg]
 			if pkgUsage == 0 {
+				recordDrop(opts, config.KindNoPackage, "target_never_observed")
 				continue
 			}
 			violations := 0
@@ -200,26 +251,37 @@ func proposeNoPackage(g *graph.Graph, opts Options) []Candidate {
 				violations = edges[pkg]
 			}
 			if violations == 0 && pkgUsage < minGlobalUsage {
+				recordDrop(opts, config.KindNoPackage, "zero_low_global_usage")
 				continue
 			}
 			if violations == 0 && sourceImportCount == 0 {
+				recordDrop(opts, config.KindNoPackage, "zero_inactive_source")
 				continue
 			}
 			if violations == 0 && isLowSignalSourceScope(sourceSubtree) {
+				recordDrop(opts, config.KindNoPackage, "zero_low_signal_scope")
 				continue
 			}
 			if violations == 0 && packageSourceSpread[pkg] > maxSpread {
+				recordDrop(opts, config.KindNoPackage, "zero_target_over_spread")
 				continue
 			}
 			if violations == 0 && zeroViolationBySource[sourceSubtree] >= maxZeroPerScope {
+				recordDrop(opts, config.KindNoPackage, "zero_source_cap")
+				continue
+			}
+			if violations == 0 && zeroViolationByTarget[pkg] >= maxZeroPerTarget {
+				recordDrop(opts, config.KindNoPackage, "zero_target_cap")
 				continue
 			}
 			prevalence := float64(violations) / float64(totalFiles)
 			if prevalence > opts.MaxPrevalence {
+				recordDrop(opts, config.KindNoPackage, "prevalence_over_limit")
 				continue
 			}
 			if violations == 0 {
 				zeroViolationBySource[sourceSubtree]++
+				zeroViolationByTarget[pkg]++
 			}
 			candidates = append(candidates, Candidate{
 				Kind:       config.KindNoPackage,
@@ -377,6 +439,101 @@ func sortedSetKeys(m map[string]struct{}) []string {
 	return out
 }
 
+func aggregateZeroViolationSiblingScopes(candidates []Candidate, opts Options) []Candidate {
+	if len(candidates) == 0 {
+		return candidates
+	}
+
+	targetGroups := map[string][]int{}
+	for i, c := range candidates {
+		if c.Violations != 0 || len(c.Scope) == 0 || len(c.Target) == 0 {
+			continue
+		}
+		targetGroups[c.Target[0]] = append(targetGroups[c.Target[0]], i)
+	}
+
+	merged := map[int]struct{}{}
+	aggregated := make([]Candidate, 0)
+	targets := sortedSetKeysStringSlices(targetGroups)
+	for _, target := range targets {
+		indices := targetGroups[target]
+		parentGroups := map[string][]int{}
+		for _, idx := range indices {
+			scopeRoot := scopePatternRoot(candidates[idx].Scope[0])
+			if scopeRoot == "" {
+				continue
+			}
+			parent := path.Dir(scopeRoot)
+			if parent == "." || parent == "/" || parent == "" || parent == scopeRoot {
+				continue
+			}
+			parentGroups[parent] = append(parentGroups[parent], idx)
+		}
+		parents := sortedSetKeysStringSlices(parentGroups)
+		for _, parent := range parents {
+			group := parentGroups[parent]
+			if len(group) < 2 {
+				continue
+			}
+			totalSupport := 0
+			bestSeverity := config.SeverityWarning
+			for _, idx := range group {
+				c := candidates[idx]
+				totalSupport += c.Support
+				if c.Severity == config.SeverityError {
+					bestSeverity = config.SeverityError
+				}
+			}
+			aggregated = append(aggregated, Candidate{
+				Kind:       candidates[group[0]].Kind,
+				Scope:      []string{parent + "/**"},
+				Target:     []string{target},
+				Severity:   bestSeverity,
+				Support:    totalSupport,
+				Violations: 0,
+				Prevalence: 0,
+				Confidence: confidence(0, totalSupport),
+				Evidence:   fmt.Sprintf("0/%d files across %d sibling scopes under %s import %s", totalSupport, len(group), parent, target),
+			})
+			for _, idx := range group {
+				merged[idx] = struct{}{}
+			}
+			recordDrop(opts, candidates[group[0]].Kind, "zero_parent_aggregated")
+		}
+	}
+
+	if len(merged) == 0 {
+		return candidates
+	}
+
+	out := make([]Candidate, 0, len(candidates)-len(merged)+len(aggregated))
+	for i, c := range candidates {
+		if _, ok := merged[i]; ok {
+			continue
+		}
+		out = append(out, c)
+	}
+	out = append(out, aggregated...)
+	return out
+}
+
+func sortedSetKeysStringSlices[V any](m map[string][]V) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func scopePatternRoot(scopePattern string) string {
+	s := strings.TrimSpace(scopePattern)
+	if s == "" {
+		return ""
+	}
+	return strings.TrimSuffix(s, "/**")
+}
+
 func capCandidates(candidates []Candidate, max int) []Candidate {
 	if max <= 0 || len(candidates) <= max {
 		return candidates
@@ -384,7 +541,58 @@ func capCandidates(candidates []Candidate, max int) []Candidate {
 	sort.Slice(candidates, func(i, j int) bool {
 		return betterCandidate(candidates[i], candidates[j])
 	})
-	return append([]Candidate{}, candidates[:max]...)
+	violating := make([]Candidate, 0, len(candidates))
+	zeroViolation := make([]Candidate, 0, len(candidates))
+	for _, c := range candidates {
+		if c.Violations > 0 {
+			violating = append(violating, c)
+			continue
+		}
+		zeroViolation = append(zeroViolation, c)
+	}
+	if len(violating) >= max {
+		return append([]Candidate{}, violating[:max]...)
+	}
+	out := make([]Candidate, 0, max)
+	out = append(out, violating...)
+	remaining := max - len(out)
+	maxZeroWithinCap := maxZeroCandidatesWithinCap(max, len(violating))
+	if remaining > maxZeroWithinCap {
+		remaining = maxZeroWithinCap
+	}
+	if remaining > len(zeroViolation) {
+		remaining = len(zeroViolation)
+	}
+	out = append(out, zeroViolation[:remaining]...)
+	return out
+}
+
+func maxZeroCandidatesWithinCap(max, violatingCount int) int {
+	if max <= 0 {
+		return 0
+	}
+	limit := max / 2
+	if limit < 20 {
+		limit = max
+	}
+	// If there are no violating findings, still keep a useful but bounded set of
+	// zero-violation candidates.
+	if violatingCount == 0 {
+		fallback := max / 3
+		if fallback < 20 {
+			fallback = max
+		}
+		if fallback < limit {
+			limit = fallback
+		}
+	}
+	if limit > max-violatingCount {
+		limit = max - violatingCount
+	}
+	if limit < 0 {
+		return 0
+	}
+	return limit
 }
 
 func betterCandidate(a, b Candidate) bool {
@@ -462,6 +670,16 @@ func maxZeroViolationCandidatesPerScope(minSupport int) int {
 		return 5
 	}
 	return 3
+}
+
+func maxZeroViolationCandidatesPerTarget(minSupport int) int {
+	if minSupport >= 50 {
+		return 16
+	}
+	if minSupport >= 20 {
+		return 10
+	}
+	return 5
 }
 
 func isLowSignalSourceScope(scope string) bool {

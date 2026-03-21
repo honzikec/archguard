@@ -134,6 +134,10 @@ func runMine(args []string) int {
 	frameworkResolution := rootFrameworkResolution
 	candidateBuckets := make([]miner.Candidate, 0)
 	totalNormalization := miner.MineNormalizationStats{}
+	var debugStats *miner.DebugStats
+	if common.debug {
+		debugStats = miner.NewDebugStats()
+	}
 
 	for _, wsRoot := range workspaceRoots {
 		wsFiles := filterFilesByWorkspace(files, wsRoot)
@@ -151,6 +155,7 @@ func runMine(args []string) int {
 			MinSupport:           *minSupport,
 			MaxPrevalence:        *maxPrevalence,
 			MaxCandidatesPerKind: *maxCandidatesPerKind,
+			DebugStats:           debugStats,
 		})
 		candidateBuckets = append(candidateBuckets, wsCandidates...)
 		totalNormalization.OriginalNodes += stats.OriginalNodes
@@ -205,6 +210,16 @@ func runMine(args []string) int {
 			metadata.Normalization.OriginalFiles,
 			metadata.Normalization.NormalizedFiles,
 		)
+		if debugStats != nil && len(debugStats.Dropped) > 0 {
+			keys := make([]string, 0, len(debugStats.Dropped))
+			for key := range debugStats.Dropped {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			for _, key := range keys {
+				fmt.Fprintf(os.Stderr, "mine dropped %s=%d\n", key, debugStats.Dropped[key])
+			}
+		}
 	}
 
 	if *emitConfig {
