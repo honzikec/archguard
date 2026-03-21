@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/honzikec/archguard/internal/brief"
+	"gopkg.in/yaml.v3"
 )
 
 func runInit(args []string) int {
@@ -22,9 +25,51 @@ func runInit(args []string) int {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	setFlagSetOutput(fs)
 	common := bindCommonFlags(fs, commonFlags{configPath: "archguard.yaml", format: "text"})
+	fromBrief := fs.String("from-brief", "", "Path to architecture brief file (yaml/json) to compile into archguard config")
+	outPath := fs.String("out", "", "Output path for generated config when using --from-brief (defaults to --config)")
 	force := fs.Bool("force", false, "Overwrite existing config file")
 	if err := fs.Parse(args); err != nil {
 		return 2
+	}
+
+	briefPath := strings.TrimSpace(*fromBrief)
+	targetPath := strings.TrimSpace(*outPath)
+	if briefPath == "" && targetPath != "" {
+		fmt.Fprintln(os.Stderr, "--out requires --from-brief")
+		return 2
+	}
+	if briefPath != "" {
+		if targetPath == "" {
+			targetPath = common.configPath
+		}
+		if _, err := os.Stat(targetPath); err == nil && !*force {
+			fmt.Fprintf(os.Stderr, "config already exists: %s (use --force to overwrite)\n", targetPath)
+			return 2
+		}
+
+		spec, err := brief.Load(briefPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to load brief: %v\n", err)
+			return 2
+		}
+		cfg, err := brief.Compile(spec)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to compile brief: %v\n", err)
+			return 2
+		}
+		data, err := yaml.Marshal(cfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to render config: %v\n", err)
+			return 2
+		}
+		if err := os.WriteFile(targetPath, data, 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to write config: %v\n", err)
+			return 2
+		}
+		if !common.quiet {
+			fmt.Printf("Created %s from brief %s\n", targetPath, briefPath)
+		}
+		return 0
 	}
 
 	if _, err := os.Stat(common.configPath); err == nil && !*force {

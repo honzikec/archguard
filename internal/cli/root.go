@@ -53,7 +53,7 @@ func printHelp() {
 	fmt.Println("  check    Evaluate rules against repository files")
 	fmt.Println("  mine     Discover candidate rules from existing structure")
 	fmt.Println("  explain  Print details for a configured rule")
-	fmt.Println("  init     Write a starter archguard.yaml or generate profile/adapter scaffolds")
+	fmt.Println("  init     Write starter config, compile briefs, or generate profile/adapter scaffolds")
 	fmt.Println("  version  Print version/build information")
 	fmt.Println()
 	fmt.Println("Run `archguard <command> --help` for command-specific flags.")

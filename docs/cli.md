@@ -62,9 +62,12 @@ Flags:
 Flags:
 - `--config`
 - `--force`
+- `--from-brief` (compile architecture brief YAML/JSON to config)
+- `--out` (output path when using `--from-brief`, default: `--config`)
 
 Subcommands:
 - `archguard init` writes a starter config file
+- `archguard init --from-brief architecture-brief.yaml --out archguard.yaml` compiles a harness-agnostic architecture brief into validated config
 - `archguard init profile --name <id> [--dir <path>] [--force]` scaffolds a framework profile package for contributors
 - `archguard init adapter --name <id> [--dir <path>] [--force]` scaffolds a language adapter package for contributors
 

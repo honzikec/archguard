@@ -2,6 +2,10 @@
 
 `archguard.yaml` is strict and rejects unknown keys.
 
+For greenfield setup from natural-language intent, use architecture brief compilation:
+- `archguard init --from-brief architecture-brief.yaml --out archguard.yaml`
+- brief format and examples: `docs/brief.md`
+
 ## Schema
 
 ```yaml
