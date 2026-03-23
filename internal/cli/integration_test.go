@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/honzikec/archguard/internal/config"
 )
 
 func TestCheckAliasViolation(t *testing.T) {
@@ -136,6 +138,47 @@ func TestMineEmitConfigAdoptsCatalog(t *testing.T) {
 	}
 	if !strings.Contains(out, "derived_from_catalog") {
 		t.Fatalf("expected derived_from_catalog trace in emitted config")
+	}
+}
+
+func TestMineInteractiveWritesSelectedRules(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteFile(t, filepath.Join(dir, "archguard.yaml"), `version: 1
+project:
+  roots: ["src"]
+  include: ["**/*.ts"]
+  exclude: ["**/node_modules/**"]
+rules: []
+`)
+	mustWriteFile(t, filepath.Join(dir, "src", "domain", "a.ts"), `import b from "../infra/b"`)
+	mustWriteFile(t, filepath.Join(dir, "src", "infra", "b.ts"), `export const b = 1`)
+
+	code, out, errOut := runCmdInDirWithInput(t, dir, []string{
+		"mine",
+		"--config", "archguard.yaml",
+		"--catalog", "off",
+		"--min-support", "1",
+		"--max-prevalence", "1",
+		"--interactive",
+	}, "a\ne\ny\n")
+	if code != 0 {
+		t.Fatalf("expected interactive mine exit 0, got %d stderr=%s output=%s", code, errOut, out)
+	}
+	if !strings.Contains(out, "Updated archguard.yaml with") {
+		t.Fatalf("expected updated config message, got: %s", out)
+	}
+
+	cfg, err := config.Load(filepath.Join(dir, "archguard.yaml"))
+	if err != nil {
+		t.Fatalf("expected written config to be valid: %v", err)
+	}
+	if len(cfg.Rules) == 0 {
+		t.Fatal("expected at least one selected rule to be written")
+	}
+	for _, rule := range cfg.Rules {
+		if rule.Severity != "error" {
+			t.Fatalf("expected overridden severity=error, got rule %+v", rule)
+		}
 	}
 }
 
@@ -378,6 +421,48 @@ func runCmdInDir(t *testing.T, dir string, args []string) (int, string, string) 
 	_ = wErr.Close()
 	os.Stdout = oldOut
 	os.Stderr = oldErr
+
+	var outBuf bytes.Buffer
+	var errBuf bytes.Buffer
+	_, _ = outBuf.ReadFrom(rOut)
+	_, _ = errBuf.ReadFrom(rErr)
+	_ = rOut.Close()
+	_ = rErr.Close()
+
+	return code, outBuf.String(), errBuf.String()
+}
+
+func runCmdInDirWithInput(t *testing.T, dir string, args []string, input string) (int, string, string) {
+	t.Helper()
+	cwd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(cwd) }()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir failed: %v", err)
+	}
+
+	oldOut := os.Stdout
+	oldErr := os.Stderr
+	oldIn := os.Stdin
+	rOut, wOut, _ := os.Pipe()
+	rErr, wErr, _ := os.Pipe()
+	rIn, wIn, _ := os.Pipe()
+	if _, err := wIn.Write([]byte(input)); err != nil {
+		t.Fatalf("stdin write failed: %v", err)
+	}
+	_ = wIn.Close()
+
+	os.Stdout = wOut
+	os.Stderr = wErr
+	os.Stdin = rIn
+
+	code := execute(args)
+
+	_ = wOut.Close()
+	_ = wErr.Close()
+	os.Stdout = oldOut
+	os.Stderr = oldErr
+	os.Stdin = oldIn
+	_ = rIn.Close()
 
 	var outBuf bytes.Buffer
 	var errBuf bytes.Buffer

@@ -28,6 +28,7 @@ func runMine(args []string) int {
 	maxCandidatesPerKind := fs.Int("max-candidates-per-kind", 200, "Maximum mined candidates per kind (0 = unlimited)")
 	emitConfig := fs.Bool("emit-config", false, "Emit a starter config from mined candidates")
 	emitNoCycleSeverity := fs.String("emit-no-cycle-severity", "warning", "Severity for emitted no_cycle rules: warning|error")
+	interactive := fs.Bool("interactive", false, "Interactively select mined rules and write them into config")
 	workspaceMode := fs.String("workspace-mode", "auto", "Workspace mining mode: auto|off")
 	catalogMode := fs.String("catalog", "builtin", "Catalog mode: builtin|off")
 	catalogFormat := fs.String("catalog-format", "", "Catalog output format: text|json (default follows --format)")
@@ -39,6 +40,14 @@ func runMine(args []string) int {
 	}
 	if common.format != "text" && common.format != "yaml" && common.format != "json" {
 		fmt.Fprintf(os.Stderr, "unsupported format: %s\n", common.format)
+		return 2
+	}
+	if *interactive && *emitConfig {
+		fmt.Fprintln(os.Stderr, "--interactive cannot be combined with --emit-config")
+		return 2
+	}
+	if *interactive && common.format != "text" {
+		fmt.Fprintln(os.Stderr, "--interactive requires --format text")
 		return 2
 	}
 	if *catalogMode != "builtin" && *catalogMode != "off" {
@@ -230,6 +239,17 @@ func runMine(args []string) int {
 		fmt.Print(miner.EmitStarterConfigWithCatalog(candidates, adopted, miner.EmitOptions{
 			NoCycleSeverity: *emitNoCycleSeverity,
 		}))
+		return 0
+	}
+	if *interactive {
+		adopted := []config.Rule{}
+		if *adoptCatalog {
+			adopted = miner.AdoptCatalogMatches(catalogMatches, *adoptThreshold)
+		}
+		if err := runMineInteractive(common.configPath, cfg, candidates, adopted, *emitNoCycleSeverity); err != nil {
+			fmt.Fprintf(os.Stderr, "interactive mine failed: %v\n", err)
+			return 2
+		}
 		return 0
 	}
 

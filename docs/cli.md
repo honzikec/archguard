@@ -26,6 +26,7 @@ Flags:
 - `--min-support`
 - `--max-prevalence`
 - `--max-candidates-per-kind` (`0` = unlimited, default `200`)
+- `--interactive` (interactive rule selection and write-back to config)
 - `--workspace-mode` (`auto|off`, default `auto`)
 - `--emit-config`
 - `--emit-no-cycle-severity` (`warning|error`, default `warning`)
@@ -48,6 +49,7 @@ Output notes:
 - mine resolves a framework profile (`generic|nextjs|react|react_router|react_native|angular`) and applies normalization only to mining inputs
 - check/mine resolve language adapter (`auto|javascript|php`) before discovery/parsing
 - With `--emit-config --adopt-catalog`, adopted catalog rules are appended to emitted config
+- `--interactive` supports selecting mined rules (`a`/`n`/index list), optional severity override, and confirmation before writing config
 - emitted `no_cycle` rules default to `warning` unless overridden via `--emit-no-cycle-severity=error`
 
 ## `archguard explain`
