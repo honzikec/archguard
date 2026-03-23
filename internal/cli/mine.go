@@ -348,13 +348,13 @@ func dedupeCandidates(in []miner.Candidate, maxPerKind int) []miner.Candidate {
 	return out
 }
 
-func confidenceRank(confidence string) int {
-	switch strings.ToUpper(strings.TrimSpace(confidence)) {
-	case "HIGH":
+func confidenceRank(confidence miner.ConfidenceLevel) int {
+	switch confidence {
+	case miner.ConfidenceHigh:
 		return 3
-	case "MEDIUM":
+	case miner.ConfidenceMedium:
 		return 2
-	case "LOW":
+	case miner.ConfidenceLow:
 		return 1
 	default:
 		return 0

@@ -1,6 +1,7 @@
 package graph_test
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/honzikec/archguard/internal/graph"
@@ -34,5 +35,87 @@ func TestBuildSkipsPathLikePackageSpecifiers(t *testing.T) {
 
 	if len(g.PackageEdges) != 0 {
 		t.Fatalf("expected no package edges for path-like specifiers, got %+v", g.PackageEdges)
+	}
+}
+
+func TestBuildGraph(t *testing.T) {
+	allFiles := []string{
+		"src/index.ts",
+		"src/domain/user.ts",
+		"src/domain/auth.ts",
+		"src/infra/db.ts",
+	}
+
+	imports := []model.ImportRef{
+		{
+			SourceFile:   "src/index.ts",
+			ResolvedPath: "src/domain/auth.ts",
+		},
+		{
+			SourceFile:   "src/domain/auth.ts",
+			ResolvedPath: "src/domain/user.ts",
+		},
+		{
+			SourceFile:      "src/domain/auth.ts",
+			RawImport:       "axios",
+			IsPackageImport: true,
+		},
+		{
+			SourceFile:   "src/domain/user.ts",
+			ResolvedPath: "src/infra/db.ts",
+		},
+		{
+			SourceFile:   "src/infra/db.ts",
+			ResolvedPath: "src/domain/user.ts", // Cycle!
+		},
+		{
+			SourceFile:   "src/domain/user.ts",
+			ResolvedPath: "src/domain/auth.ts", // Internal cycle! Should be ignored since it's same subtree
+		},
+	}
+
+	g := graph.Build(imports, allFiles)
+
+	expectedNodes := map[string]int{
+		"src":        1,
+		"src/domain": 2,
+		"src/infra":  1,
+	}
+
+	if !reflect.DeepEqual(g.Nodes, expectedNodes) {
+		t.Errorf("Nodes mismatch. got: %v, want: %v", g.Nodes, expectedNodes)
+	}
+
+	expectedEdges := map[string]map[string]int{
+		"src": {
+			"src/domain": 1,
+		},
+		"src/domain": {
+			"src/infra": 1,
+		},
+		"src/infra": {
+			"src/domain": 1,
+		},
+	}
+
+	if !reflect.DeepEqual(g.Edges, expectedEdges) {
+		t.Errorf("Edges mismatch. got: %v, want: %v", g.Edges, expectedEdges)
+	}
+
+	expectedPackageEdges := map[string]map[string]int{
+		"src/domain": {
+			"axios": 1,
+		},
+	}
+
+	if !reflect.DeepEqual(g.PackageEdges, expectedPackageEdges) {
+		t.Errorf("PackageEdges mismatch. got: %v, want: %v", g.PackageEdges, expectedPackageEdges)
+	}
+}
+
+func TestBuildGraphEmpty(t *testing.T) {
+	g := graph.Build(nil, nil)
+	if len(g.Nodes) > 0 || len(g.Edges) > 0 || len(g.PackageEdges) > 0 {
+		t.Errorf("Expected empty graph")
 	}
 }

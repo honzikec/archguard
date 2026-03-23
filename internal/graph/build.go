@@ -30,8 +30,19 @@ func Build(imports []model.ImportRef, allFiles []string) *Graph {
 		}
 	}
 
-	seenSubtree := map[string]map[string]map[string]struct{}{}
-	seenPackages := map[string]map[string]map[string]struct{}{}
+	type subtreeEdge struct {
+		sourceSubtree string
+		targetSubtree string
+		sourceFile    string
+	}
+	type packageEdge struct {
+		sourceSubtree string
+		pkg           string
+		sourceFile    string
+	}
+
+	seenSubtree := map[subtreeEdge]struct{}{}
+	seenPackages := map[packageEdge]struct{}{}
 
 	for _, imp := range imports {
 		sourceSubtree := path.Dir(imp.SourceFile)
@@ -43,14 +54,9 @@ func Build(imports []model.ImportRef, allFiles []string) *Graph {
 			if _, ok := g.PackageEdges[sourceSubtree]; !ok {
 				g.PackageEdges[sourceSubtree] = map[string]int{}
 			}
-			if _, ok := seenPackages[sourceSubtree]; !ok {
-				seenPackages[sourceSubtree] = map[string]map[string]struct{}{}
-			}
-			if _, ok := seenPackages[sourceSubtree][pkg]; !ok {
-				seenPackages[sourceSubtree][pkg] = map[string]struct{}{}
-			}
-			if _, ok := seenPackages[sourceSubtree][pkg][imp.SourceFile]; !ok {
-				seenPackages[sourceSubtree][pkg][imp.SourceFile] = struct{}{}
+			edge := packageEdge{sourceSubtree, pkg, imp.SourceFile}
+			if _, ok := seenPackages[edge]; !ok {
+				seenPackages[edge] = struct{}{}
 				g.PackageEdges[sourceSubtree][pkg]++
 			}
 			continue
@@ -71,14 +77,9 @@ func Build(imports []model.ImportRef, allFiles []string) *Graph {
 		if _, ok := g.Edges[sourceSubtree]; !ok {
 			g.Edges[sourceSubtree] = map[string]int{}
 		}
-		if _, ok := seenSubtree[sourceSubtree]; !ok {
-			seenSubtree[sourceSubtree] = map[string]map[string]struct{}{}
-		}
-		if _, ok := seenSubtree[sourceSubtree][targetSubtree]; !ok {
-			seenSubtree[sourceSubtree][targetSubtree] = map[string]struct{}{}
-		}
-		if _, ok := seenSubtree[sourceSubtree][targetSubtree][imp.SourceFile]; !ok {
-			seenSubtree[sourceSubtree][targetSubtree][imp.SourceFile] = struct{}{}
+		edge := subtreeEdge{sourceSubtree, targetSubtree, imp.SourceFile}
+		if _, ok := seenSubtree[edge]; !ok {
+			seenSubtree[edge] = struct{}{}
 			g.Edges[sourceSubtree][targetSubtree]++
 		}
 	}

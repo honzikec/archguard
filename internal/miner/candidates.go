@@ -56,9 +56,17 @@ type Candidate struct {
 	Support    int      `json:"support" yaml:"support"`
 	Violations int      `json:"violations" yaml:"violations"`
 	Prevalence float64  `json:"prevalence" yaml:"prevalence"`
-	Confidence string   `json:"confidence" yaml:"confidence"`
+	Confidence ConfidenceLevel `json:"confidence" yaml:"confidence"`
 	Evidence   string   `json:"evidence" yaml:"evidence"`
 }
+
+type ConfidenceLevel string
+
+const (
+	ConfidenceHigh   ConfidenceLevel = "HIGH"
+	ConfidenceMedium ConfidenceLevel = "MEDIUM"
+	ConfidenceLow    ConfidenceLevel = "LOW"
+)
 
 func Propose(g *graph.Graph, allFiles []string, opts Options) []Candidate {
 	if opts.MinSupport <= 0 {
@@ -102,116 +110,38 @@ func Propose(g *graph.Graph, allFiles []string, opts Options) []Candidate {
 }
 
 func proposeNoImport(g *graph.Graph, opts Options) []Candidate {
-	candidates := make([]Candidate, 0)
-	sourceActivity := sourceImportActivity(g)
 	globalTargetUsage := map[string]int{}
 	targetSourceSpread := map[string]int{}
-	sourceSubtrees := sortedKeys(g.Nodes)
 	for _, targets := range g.Edges {
 		for targetSubtree, count := range targets {
 			globalTargetUsage[targetSubtree] += count
-		}
-	}
-	for sourceSubtree, targets := range g.Edges {
-		_ = sourceSubtree
-		for targetSubtree, count := range targets {
 			if count > 0 {
 				targetSourceSpread[targetSubtree]++
 			}
 		}
 	}
-	minGlobalUsage := minZeroViolationImportTargetUsage(opts.MinSupport)
-	activeSources := 0
-	for _, totalFiles := range g.Nodes {
-		if totalFiles >= opts.MinSupport {
-			activeSources++
-		}
-	}
-	maxSpread := maxZeroViolationSourceSpread(activeSources)
-	maxZeroPerScope := maxZeroViolationCandidatesPerScope(opts.MinSupport)
-	maxZeroPerTarget := maxZeroViolationCandidatesPerTarget(opts.MinSupport)
-	zeroViolationBySource := map[string]int{}
-	zeroViolationByTarget := map[string]int{}
-	for _, sourceSubtree := range sourceSubtrees {
-		totalFiles := g.Nodes[sourceSubtree]
-		if totalFiles < opts.MinSupport {
-			continue
-		}
-		sourceImportCount := sourceActivity[sourceSubtree]
-		for _, targetSubtree := range sourceSubtrees {
-			if sourceSubtree == targetSubtree {
-				continue
+
+	return mineCandidates(
+		g, opts, config.KindNoImport,
+		sortedKeys(g.Nodes),
+		globalTargetUsage,
+		targetSourceSpread,
+		minZeroViolationImportTargetUsage(opts.MinSupport),
+		func(source, target string) int {
+			if edges, ok := g.Edges[source]; ok {
+				return edges[target]
 			}
-			targetUsage := globalTargetUsage[targetSubtree]
-			if targetUsage == 0 {
-				// Skip never-observed targets to avoid combinatorial no-signal rules.
-				recordDrop(opts, config.KindNoImport, "target_never_observed")
-				continue
-			}
-			violations := 0
-			if edges, ok := g.Edges[sourceSubtree]; ok {
-				violations = edges[targetSubtree]
-			}
-			if violations == 0 && targetUsage < minGlobalUsage {
-				// Zero-violation rules are only useful when the target is materially used elsewhere.
-				recordDrop(opts, config.KindNoImport, "zero_low_global_usage")
-				continue
-			}
-			if violations == 0 && sourceImportCount == 0 {
-				// Inactive source scopes (no observed imports) produce low-signal blanket candidates.
-				recordDrop(opts, config.KindNoImport, "zero_inactive_source")
-				continue
-			}
-			if violations == 0 && isLowSignalSourceScope(sourceSubtree) {
-				recordDrop(opts, config.KindNoImport, "zero_low_signal_scope")
-				continue
-			}
-			if violations == 0 && targetSourceSpread[targetSubtree] > maxSpread {
-				// Highly shared targets produce broad low-signal zero-violation candidates.
-				recordDrop(opts, config.KindNoImport, "zero_target_over_spread")
-				continue
-			}
-			if violations == 0 && zeroViolationBySource[sourceSubtree] >= maxZeroPerScope {
-				// Keep zero-violation output diverse across scopes instead of saturating one scope.
-				recordDrop(opts, config.KindNoImport, "zero_source_cap")
-				continue
-			}
-			if violations == 0 && zeroViolationByTarget[targetSubtree] >= maxZeroPerTarget {
-				recordDrop(opts, config.KindNoImport, "zero_target_cap")
-				continue
-			}
-			prevalence := float64(violations) / float64(totalFiles)
-			if prevalence > opts.MaxPrevalence {
-				recordDrop(opts, config.KindNoImport, "prevalence_over_limit")
-				continue
-			}
-			if violations == 0 {
-				zeroViolationBySource[sourceSubtree]++
-				zeroViolationByTarget[targetSubtree]++
-			}
-			candidates = append(candidates, Candidate{
-				Kind:       config.KindNoImport,
-				Scope:      []string{sourceSubtree + "/**"},
-				Target:     []string{targetSubtree + "/**"},
-				Severity:   config.SeverityWarning,
-				Support:    totalFiles,
-				Violations: violations,
-				Prevalence: prevalence,
-				Confidence: confidence(prevalence, totalFiles),
-				Evidence:   fmt.Sprintf("%d/%d files in %s import %s", violations, totalFiles, sourceSubtree, targetSubtree),
-			})
-		}
-	}
-	return candidates
+			return 0
+		},
+		func(target string) string { return target + "/**" },
+		func(source, target string) bool { return source == target },
+	)
 }
 
 func proposeNoPackage(g *graph.Graph, opts Options) []Candidate {
-	candidates := make([]Candidate, 0)
-	sourceActivity := sourceImportActivity(g)
 	allPackages := map[string]struct{}{}
 	globalPackageUsage := map[string]int{}
 	packageSourceSpread := map[string]int{}
-	sourceSubtrees := sortedKeys(g.Nodes)
 	for _, packages := range g.PackageEdges {
 		for pkg, count := range packages {
 			allPackages[pkg] = struct{}{}
@@ -221,7 +151,39 @@ func proposeNoPackage(g *graph.Graph, opts Options) []Candidate {
 			}
 		}
 	}
-	minGlobalUsage := minZeroViolationTargetUsage(opts.MinSupport)
+
+	return mineCandidates(
+		g, opts, config.KindNoPackage,
+		sortedSetKeys(allPackages),
+		globalPackageUsage,
+		packageSourceSpread,
+		minZeroViolationTargetUsage(opts.MinSupport),
+		func(source, target string) int {
+			if edges, ok := g.PackageEdges[source]; ok {
+				return edges[target]
+			}
+			return 0
+		},
+		func(target string) string { return target },
+		nil,
+	)
+}
+
+func mineCandidates(
+	g *graph.Graph,
+	opts Options,
+	kind string,
+	targets []string,
+	targetUsage map[string]int,
+	targetSpread map[string]int,
+	minGlobalUsage int,
+	getViolations func(source, target string) int,
+	formatTarget func(target string) string,
+	skipTarget func(source, target string) bool,
+) []Candidate {
+	candidates := make([]Candidate, 0)
+	sourceActivity := sourceImportActivity(g)
+	sourceSubtrees := sortedKeys(g.Nodes)
 	activeSources := 0
 	for _, totalFiles := range g.Nodes {
 		if totalFiles >= opts.MinSupport {
@@ -233,66 +195,66 @@ func proposeNoPackage(g *graph.Graph, opts Options) []Candidate {
 	maxZeroPerTarget := maxZeroViolationCandidatesPerTarget(opts.MinSupport)
 	zeroViolationBySource := map[string]int{}
 	zeroViolationByTarget := map[string]int{}
-	packages := sortedSetKeys(allPackages)
+	
 	for _, sourceSubtree := range sourceSubtrees {
 		totalFiles := g.Nodes[sourceSubtree]
 		if totalFiles < opts.MinSupport {
 			continue
 		}
 		sourceImportCount := sourceActivity[sourceSubtree]
-		for _, pkg := range packages {
-			pkgUsage := globalPackageUsage[pkg]
-			if pkgUsage == 0 {
-				recordDrop(opts, config.KindNoPackage, "target_never_observed")
+		for _, target := range targets {
+			if skipTarget != nil && skipTarget(sourceSubtree, target) {
 				continue
 			}
-			violations := 0
-			if edges, ok := g.PackageEdges[sourceSubtree]; ok {
-				violations = edges[pkg]
+			usage := targetUsage[target]
+			if usage == 0 {
+				recordDrop(opts, kind, "target_never_observed")
+				continue
 			}
-			if violations == 0 && pkgUsage < minGlobalUsage {
-				recordDrop(opts, config.KindNoPackage, "zero_low_global_usage")
+			violations := getViolations(sourceSubtree, target)
+			if violations == 0 && usage < minGlobalUsage {
+				recordDrop(opts, kind, "zero_low_global_usage")
 				continue
 			}
 			if violations == 0 && sourceImportCount == 0 {
-				recordDrop(opts, config.KindNoPackage, "zero_inactive_source")
+				recordDrop(opts, kind, "zero_inactive_source")
 				continue
 			}
 			if violations == 0 && isLowSignalSourceScope(sourceSubtree) {
-				recordDrop(opts, config.KindNoPackage, "zero_low_signal_scope")
+				recordDrop(opts, kind, "zero_low_signal_scope")
 				continue
 			}
-			if violations == 0 && packageSourceSpread[pkg] > maxSpread {
-				recordDrop(opts, config.KindNoPackage, "zero_target_over_spread")
+			if violations == 0 && targetSpread[target] > maxSpread {
+				recordDrop(opts, kind, "zero_target_over_spread")
 				continue
 			}
 			if violations == 0 && zeroViolationBySource[sourceSubtree] >= maxZeroPerScope {
-				recordDrop(opts, config.KindNoPackage, "zero_source_cap")
+				recordDrop(opts, kind, "zero_source_cap")
 				continue
 			}
-			if violations == 0 && zeroViolationByTarget[pkg] >= maxZeroPerTarget {
-				recordDrop(opts, config.KindNoPackage, "zero_target_cap")
+			if violations == 0 && zeroViolationByTarget[target] >= maxZeroPerTarget {
+				recordDrop(opts, kind, "zero_target_cap")
 				continue
 			}
 			prevalence := float64(violations) / float64(totalFiles)
 			if prevalence > opts.MaxPrevalence {
-				recordDrop(opts, config.KindNoPackage, "prevalence_over_limit")
+				recordDrop(opts, kind, "prevalence_over_limit")
 				continue
 			}
 			if violations == 0 {
 				zeroViolationBySource[sourceSubtree]++
-				zeroViolationByTarget[pkg]++
+				zeroViolationByTarget[target]++
 			}
 			candidates = append(candidates, Candidate{
-				Kind:       config.KindNoPackage,
+				Kind:       kind,
 				Scope:      []string{sourceSubtree + "/**"},
-				Target:     []string{pkg},
+				Target:     []string{formatTarget(target)},
 				Severity:   config.SeverityWarning,
 				Support:    totalFiles,
 				Violations: violations,
 				Prevalence: prevalence,
 				Confidence: confidence(prevalence, totalFiles),
-				Evidence:   fmt.Sprintf("%d/%d files in %s import %s", violations, totalFiles, sourceSubtree, pkg),
+				Evidence:   fmt.Sprintf("%d/%d files in %s import %s", violations, totalFiles, sourceSubtree, target),
 			})
 		}
 	}
@@ -342,7 +304,7 @@ func proposeFilePattern(allFiles []string, opts Options) []Candidate {
 			Support:    len(files),
 			Violations: len(files) - bestCount,
 			Prevalence: prevalence,
-			Confidence: "HIGH",
+			Confidence: ConfidenceHigh,
 			Evidence:   fmt.Sprintf("%d/%d files in %s match suffix %s", bestCount, len(files), dir, bestSuffix),
 		})
 	}
@@ -374,7 +336,7 @@ func proposeNoCycle(g *graph.Graph, opts Options) []Candidate {
 			Support:    support,
 			Violations: len(component.Nodes),
 			Prevalence: 1.0,
-			Confidence: "HIGH",
+			Confidence: ConfidenceHigh,
 			Evidence:   fmt.Sprintf("cycle component (%d subtrees): %s", len(component.Nodes), strings.Join(component.Nodes, " <-> ")),
 		})
 	}
@@ -628,13 +590,13 @@ func betterCandidate(a, b Candidate) bool {
 	return aTarget < bTarget
 }
 
-func rankConfidence(confidence string) int {
-	switch strings.ToUpper(strings.TrimSpace(confidence)) {
-	case "HIGH":
+func rankConfidence(confidence ConfidenceLevel) int {
+	switch confidence {
+	case ConfidenceHigh:
 		return 3
-	case "MEDIUM":
+	case ConfidenceMedium:
 		return 2
-	case "LOW":
+	case ConfidenceLow:
 		return 1
 	default:
 		return 0
@@ -728,14 +690,14 @@ func maxZeroViolationSourceSpread(totalSources int) int {
 	return spread
 }
 
-func confidence(prevalence float64, support int) string {
+func confidence(prevalence float64, support int) ConfidenceLevel {
 	if prevalence <= 0.01 && support >= 50 {
-		return "HIGH"
+		return ConfidenceHigh
 	}
 	if prevalence <= 0.02 && support >= 20 {
-		return "MEDIUM"
+		return ConfidenceMedium
 	}
-	return "LOW"
+	return ConfidenceLow
 }
 
 func PrintText(candidates []Candidate) {
