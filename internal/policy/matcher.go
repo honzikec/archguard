@@ -1,7 +1,6 @@
 package policy
 
 import (
-	"path"
 	"regexp"
 
 	"github.com/honzikec/archguard/internal/config"
@@ -56,8 +55,4 @@ func packageMatches(targets []string, pkg string) bool {
 		}
 	}
 	return false
-}
-
-func subtree(pathValue string) string {
-	return path.Dir(pathValue)
 }
