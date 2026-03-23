@@ -393,7 +393,101 @@ func (r *Resolver) Resolve(sourceFile, rawImport string) (string, bool) {
 		}
 	}
 
+	if isPHPSourceFile(sourceFile) && strings.HasPrefix(rawImport, "@") {
+		// Yii-style aliases (e.g. @common/config/main.php) are local path aliases,
+		// not package identifiers. Keep unresolved aliases out of package constraints.
+		return "", false
+	}
+	if isPHPSourceFile(sourceFile) && strings.Contains(rawImport, "/") && strings.HasSuffix(strings.ToLower(rawImport), ".php") {
+		if resolved, ok := r.resolvePHPIncludePath(sourceFile, rawImport); ok {
+			return resolved, false
+		}
+		return "", false
+	}
+	if isPHPSourceFile(sourceFile) && isLikelyPHPBareSymbolImport(rawImport) {
+		return "", false
+	}
+
+	if strings.Contains(rawImport, `\`) {
+		if resolved, ok := r.resolvePHPNamespace(rawImport); ok {
+			return resolved, false
+		}
+		if r.isLikelyLocalPHPNamespace(rawImport) {
+			// Keep unresolved local namespaces out of package constraints.
+			return "", false
+		}
+	}
+
 	return "", true
+}
+
+func (r *Resolver) resolvePHPNamespace(rawImport string) (string, bool) {
+	normalized := Normalize(rawImport)
+	normalized = strings.Trim(normalized, "/")
+	if normalized == "" || strings.Contains(normalized, ":") {
+		return "", false
+	}
+	base := filepath.Join(r.root, normalized)
+	return r.probeLocal(base)
+}
+
+func (r *Resolver) isLikelyLocalPHPNamespace(rawImport string) bool {
+	normalized := Normalize(rawImport)
+	normalized = strings.Trim(normalized, "/")
+	if normalized == "" || strings.Contains(normalized, ":") {
+		return false
+	}
+	parts := strings.Split(normalized, "/")
+	if len(parts) == 0 || parts[0] == "" {
+		return false
+	}
+	if strings.EqualFold(parts[0], "vendor") {
+		return false
+	}
+	fi, err := os.Stat(filepath.Join(r.root, parts[0]))
+	if err != nil {
+		return false
+	}
+	return fi.IsDir()
+}
+
+func isPHPSourceFile(sourceFile string) bool {
+	sourceFile = strings.ToLower(sourceFile)
+	return strings.HasSuffix(sourceFile, ".php") || strings.HasSuffix(sourceFile, ".phtml")
+}
+
+func isLikelyPHPBareSymbolImport(rawImport string) bool {
+	rawImport = strings.TrimSpace(rawImport)
+	if rawImport == "" {
+		return false
+	}
+	if strings.Contains(rawImport, `\`) || strings.Contains(rawImport, "/") || strings.HasPrefix(rawImport, "@") {
+		return false
+	}
+	if strings.Contains(rawImport, ".") || strings.Contains(rawImport, ":") {
+		return false
+	}
+	for _, r := range rawImport {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func (r *Resolver) resolvePHPIncludePath(sourceFile, rawImport string) (string, bool) {
+	sourceDir := filepath.Dir(sourceFile)
+	candidates := []string{
+		filepath.Join(r.root, sourceDir, rawImport),
+		filepath.Join(r.root, rawImport),
+	}
+	for _, base := range candidates {
+		if resolved, ok := r.probeLocal(base); ok {
+			return resolved, true
+		}
+	}
+	return "", false
 }
 
 func (r *Resolver) resolveAlias(alias string, targets []string, rawImport string) (string, bool) {

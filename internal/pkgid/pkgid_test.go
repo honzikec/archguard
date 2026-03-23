@@ -11,6 +11,8 @@ func TestCanonical(t *testing.T) {
 		"@scope/pkg/sub/path":  "@scope/pkg",
 		"node:fs/promises":     "node:fs",
 		"node:timers":          "node:timers",
+		"yii\\web\\Controller": "yii",
+		"Common\\Models\\User": "Common",
 		"./local/module":       "",
 		"/abs/path/module":     "",
 		"../up/module":         "",

@@ -96,6 +96,51 @@ func TestProposeAppliesMinSupportToFilePattern(t *testing.T) {
 	}
 }
 
+func TestProposeSuppressesTrivialPHPFilePatternCandidates(t *testing.T) {
+	files := make([]string, 0, 32)
+	for i := 0; i < 16; i++ {
+		files = append(files, fmt.Sprintf("backend/controllers/C%d.php", i))
+		files = append(files, fmt.Sprintf("common/models/M%d.php", i))
+	}
+	g := graph.Build(nil, files)
+
+	candidates := miner.Propose(g, files, miner.Options{
+		MinSupport:    8,
+		MaxPrevalence: 1,
+	})
+	for _, c := range candidates {
+		if c.Kind == config.KindFilePattern && len(c.Target) > 0 && c.Target[0] == "^.*\\.php$" {
+			t.Fatalf("expected trivial php extension file_pattern candidate to be suppressed, got %+v", c)
+		}
+	}
+}
+
+func TestProposeKeepsNonTrivialPHPFilePatternCandidates(t *testing.T) {
+	files := make([]string, 0, 25)
+	for i := 0; i < 20; i++ {
+		files = append(files, fmt.Sprintf("backend/controllers/C%d.php", i))
+	}
+	for i := 0; i < 5; i++ {
+		files = append(files, fmt.Sprintf("common/services/S%d.service.php", i))
+	}
+	g := graph.Build(nil, files)
+
+	candidates := miner.Propose(g, files, miner.Options{
+		MinSupport:    5,
+		MaxPrevalence: 1,
+	})
+	found := false
+	for _, c := range candidates {
+		if c.Kind == config.KindFilePattern && len(c.Scope) > 0 && c.Scope[0] == "common/services/**" && len(c.Target) > 0 && c.Target[0] == "^.*\\.service\\.php$" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected non-trivial php suffix file_pattern candidate to remain")
+	}
+}
+
 func TestProposeAppliesMinSupportToNoCycle(t *testing.T) {
 	g := &graph.Graph{
 		Nodes: map[string]int{"src/a": 3, "src/b": 3, "src/c": 3},
@@ -304,6 +349,31 @@ func TestProposeNoPackageRequiresGlobalUsageForZeroViolationCandidates(t *testin
 	for _, c := range candidates {
 		if c.Kind == config.KindNoPackage && len(c.Scope) > 0 && c.Scope[0] == "src/domain/**" && len(c.Target) > 0 && c.Target[0] == "axios" {
 			t.Fatalf("expected no no_package candidate for low-global-usage package, got %+v", c)
+		}
+	}
+}
+
+func TestProposeNoPackageSkipsZeroViolationClassLikeTargets(t *testing.T) {
+	files := make([]string, 0)
+	imports := make([]model.ImportRef, 0)
+	for i := 0; i < 20; i++ {
+		files = append(files, fmt.Sprintf("src/domain/f%d.php", i))
+		files = append(files, fmt.Sprintf("src/infra/f%d.php", i))
+		imports = append(imports, model.ImportRef{
+			SourceFile:      fmt.Sprintf("src/infra/f%d.php", i),
+			RawImport:       "Aws",
+			IsPackageImport: true,
+		})
+	}
+
+	g := graph.Build(imports, files)
+	candidates := miner.Propose(g, files, miner.Options{
+		MinSupport:    20,
+		MaxPrevalence: 1,
+	})
+	for _, c := range candidates {
+		if c.Kind == config.KindNoPackage && len(c.Scope) > 0 && c.Scope[0] == "src/domain/**" && len(c.Target) > 0 && c.Target[0] == "Aws" {
+			t.Fatalf("expected zero-violation class-like no_package target to be skipped, got %+v", c)
 		}
 	}
 }

@@ -49,15 +49,15 @@ func recordDrop(opts Options, kind, reason string) {
 }
 
 type Candidate struct {
-	Kind       string   `json:"kind" yaml:"kind"`
-	Scope      []string `json:"scope" yaml:"scope"`
-	Target     []string `json:"target,omitempty" yaml:"target,omitempty"`
-	Severity   string   `json:"severity" yaml:"severity"`
-	Support    int      `json:"support" yaml:"support"`
-	Violations int      `json:"violations" yaml:"violations"`
-	Prevalence float64  `json:"prevalence" yaml:"prevalence"`
+	Kind       string          `json:"kind" yaml:"kind"`
+	Scope      []string        `json:"scope" yaml:"scope"`
+	Target     []string        `json:"target,omitempty" yaml:"target,omitempty"`
+	Severity   string          `json:"severity" yaml:"severity"`
+	Support    int             `json:"support" yaml:"support"`
+	Violations int             `json:"violations" yaml:"violations"`
+	Prevalence float64         `json:"prevalence" yaml:"prevalence"`
 	Confidence ConfidenceLevel `json:"confidence" yaml:"confidence"`
-	Evidence   string   `json:"evidence" yaml:"evidence"`
+	Evidence   string          `json:"evidence" yaml:"evidence"`
 }
 
 type ConfidenceLevel string
@@ -195,7 +195,7 @@ func mineCandidates(
 	maxZeroPerTarget := maxZeroViolationCandidatesPerTarget(opts.MinSupport)
 	zeroViolationBySource := map[string]int{}
 	zeroViolationByTarget := map[string]int{}
-	
+
 	for _, sourceSubtree := range sourceSubtrees {
 		totalFiles := g.Nodes[sourceSubtree]
 		if totalFiles < opts.MinSupport {
@@ -212,6 +212,10 @@ func mineCandidates(
 				continue
 			}
 			violations := getViolations(sourceSubtree, target)
+			if kind == config.KindNoPackage && violations == 0 && !allowZeroViolationNoPackageTarget(target) {
+				recordDrop(opts, kind, "zero_non_ecosystem_target")
+				continue
+			}
 			if violations == 0 && usage < minGlobalUsage {
 				recordDrop(opts, kind, "zero_low_global_usage")
 				continue
@@ -267,6 +271,7 @@ func proposeFilePattern(allFiles []string, opts Options) []Candidate {
 		dir := path.Dir(f)
 		byDir[dir] = append(byDir[dir], path.Base(f))
 	}
+	globalBestSuffix, globalBestRatio := dominantFileSuffix(allFiles)
 
 	candidates := make([]Candidate, 0)
 	for dir, files := range byDir {
@@ -295,6 +300,10 @@ func proposeFilePattern(allFiles []string, opts Options) []Candidate {
 		if prevalence > 0.20 {
 			continue
 		}
+		if shouldDropTrivialFilePattern(bestSuffix, len(files), len(files)-bestCount, globalBestSuffix, globalBestRatio) {
+			recordDrop(opts, config.KindFilePattern, "trivial_extension_pattern")
+			continue
+		}
 		regex := "^.*" + regexp.QuoteMeta(bestSuffix) + "$"
 		candidates = append(candidates, Candidate{
 			Kind:       config.KindFilePattern,
@@ -309,6 +318,52 @@ func proposeFilePattern(allFiles []string, opts Options) []Candidate {
 		})
 	}
 	return candidates
+}
+
+func dominantFileSuffix(files []string) (string, float64) {
+	if len(files) == 0 {
+		return "", 0
+	}
+	suffixCount := map[string]int{}
+	seen := 0
+	for _, file := range files {
+		base := path.Base(file)
+		parts := strings.SplitN(base, ".", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		suffix := "." + parts[1]
+		suffixCount[suffix]++
+		seen++
+	}
+	if seen == 0 {
+		return "", 0
+	}
+	bestSuffix := ""
+	bestCount := 0
+	for suffix, count := range suffixCount {
+		if count > bestCount {
+			bestSuffix = suffix
+			bestCount = count
+		}
+	}
+	if bestCount == 0 {
+		return "", 0
+	}
+	return bestSuffix, float64(bestCount) / float64(seen)
+}
+
+func shouldDropTrivialFilePattern(suffix string, support, violations int, globalSuffix string, globalRatio float64) bool {
+	if support <= 0 || violations != 0 {
+		return false
+	}
+	if suffix != ".php" && suffix != ".phtml" {
+		return false
+	}
+	if suffix != globalSuffix {
+		return false
+	}
+	return globalRatio >= 0.90
 }
 
 func proposeNoCycle(g *graph.Graph, opts Options) []Candidate {
@@ -642,6 +697,26 @@ func maxZeroViolationCandidatesPerTarget(minSupport int) int {
 		return 10
 	}
 	return 5
+}
+
+func allowZeroViolationNoPackageTarget(target string) bool {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return false
+	}
+	if strings.HasPrefix(target, "node:") {
+		return true
+	}
+	if strings.HasPrefix(target, "@") {
+		parts := strings.Split(target, "/")
+		return len(parts) >= 2 && parts[0] != "@" && parts[1] != ""
+	}
+	for _, r := range target {
+		if r >= 'A' && r <= 'Z' {
+			return false
+		}
+	}
+	return true
 }
 
 func isLowSignalSourceScope(scope string) bool {

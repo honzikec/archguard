@@ -21,6 +21,11 @@ func Canonical(raw string) string {
 	if raw == "" {
 		return ""
 	}
+	raw = strings.ReplaceAll(raw, "\\", "/")
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
 
 	if strings.HasPrefix(raw, ".") || strings.HasPrefix(raw, "/") {
 		return ""
