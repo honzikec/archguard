@@ -8,6 +8,8 @@ Flags:
 - `--quiet`
 - `--debug`
 - `--changed-only`
+- `--changed-against` (git ref for range diff, for example `origin/main`)
+- `--parse-error-policy` (`warn|error`, default `warn`)
 - `--severity-threshold` (`warning|error`, default `error`)
 - `--max-findings` (`0` = unlimited)
 
@@ -15,6 +17,16 @@ Exit codes:
 - `0` no blocking findings
 - `1` blocking findings
 - `2` runtime/config/usage errors
+
+Changed-file modes:
+- local developer loop: `--changed-only` (unstaged + staged + untracked)
+- CI/PR gating: `--changed-against <ref>` (diff `<ref>...HEAD`)
+- both flags can be combined (union of both changed-file sets)
+
+Parse/read errors:
+- summary includes `parse_errors` and `files_skipped`
+- with `--parse-error-policy=warn`, scan continues (default)
+- with `--parse-error-policy=error`, check exits `2` when parse/read errors occur
 
 ## `archguard mine`
 

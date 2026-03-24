@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -233,6 +234,223 @@ func TestCheckPHPNamespaceBoundaryViolation(t *testing.T) {
 	}
 	if !strings.Contains(out, "AG-PHP-NAMESPACE-NO-INFRA") {
 		t.Fatalf("expected php namespace no_import finding, got: %s", out)
+	}
+}
+
+func TestCheckResolvesConfigRelativePathsFromConfigDir(t *testing.T) {
+	dir := t.TempDir()
+	projectDir := filepath.Join(dir, "project")
+	mustWriteFile(t, filepath.Join(projectDir, "archguard.yaml"), `version: 1
+project:
+  roots: ["src"]
+  include: ["**/*.ts"]
+  exclude: ["**/node_modules/**"]
+rules:
+  - id: AG-NO-INFRA
+    kind: no_import
+    severity: error
+    scope: ["src/domain/**"]
+    target: ["src/infra/**"]
+`)
+	mustWriteFile(t, filepath.Join(projectDir, "src", "domain", "user.ts"), `import db from "../infra/db"`)
+	mustWriteFile(t, filepath.Join(projectDir, "src", "infra", "db.ts"), `export const db = 1`)
+
+	code, out, errOut := runCmdInDir(t, dir, []string{
+		"check",
+		"--config", filepath.Join("project", "archguard.yaml"),
+		"--format", "json",
+	})
+	if code != 1 {
+		t.Fatalf("expected exit 1, got %d stderr=%s output=%s", code, errOut, out)
+	}
+
+	var payload struct {
+		Findings []struct {
+			RuleID   string `json:"rule_id"`
+			FilePath string `json:"file_path"`
+		} `json:"findings"`
+		Summary struct {
+			FilesScanned   int      `json:"files_scanned"`
+			ConfigDir      string   `json:"config_dir"`
+			EffectiveRoots []string `json:"effective_roots"`
+		} `json:"summary"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("failed to decode check output: %v", err)
+	}
+	if payload.Summary.FilesScanned != 2 {
+		t.Fatalf("expected 2 scanned files, got %d", payload.Summary.FilesScanned)
+	}
+	if len(payload.Findings) != 1 || payload.Findings[0].RuleID != "AG-NO-INFRA" {
+		t.Fatalf("expected AG-NO-INFRA finding, got %+v", payload.Findings)
+	}
+	if payload.Findings[0].FilePath != "src/domain/user.ts" {
+		t.Fatalf("expected finding file path to remain config-root relative, got %s", payload.Findings[0].FilePath)
+	}
+	resolvedProjectDir := projectDir
+	if evaled, err := filepath.EvalSymlinks(projectDir); err == nil && strings.TrimSpace(evaled) != "" {
+		resolvedProjectDir = evaled
+	}
+	if payload.Summary.ConfigDir != filepath.ToSlash(filepath.Clean(resolvedProjectDir)) {
+		t.Fatalf("unexpected config_dir, got %s", payload.Summary.ConfigDir)
+	}
+	wantRoot := filepath.ToSlash(filepath.Join(resolvedProjectDir, "src"))
+	if len(payload.Summary.EffectiveRoots) != 1 || payload.Summary.EffectiveRoots[0] != wantRoot {
+		t.Fatalf("unexpected effective roots, want [%s] got %v", wantRoot, payload.Summary.EffectiveRoots)
+	}
+}
+
+func TestCheckParseErrorPolicyWarnAndError(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteFile(t, filepath.Join(dir, "archguard.yaml"), `version: 1
+project:
+  roots: ["src"]
+  include: ["**/*.php"]
+  exclude: ["**/vendor/**"]
+  language: php
+rules:
+  - id: AG-PHP-NO-INFRA
+    kind: no_import
+    severity: error
+    scope: ["src/**"]
+    target: ["src/infra/**"]
+`)
+	mustWriteFile(t, filepath.Join(dir, "src", "bad.php"), `<?php
+function broken( {
+`)
+
+	code, out, errOut := runCmdInDir(t, dir, []string{
+		"check",
+		"--config", "archguard.yaml",
+		"--format", "json",
+	})
+	if code != 0 {
+		t.Fatalf("expected warn policy to exit 0, got %d stderr=%s output=%s", code, errOut, out)
+	}
+
+	var payload struct {
+		Summary struct {
+			ParseErrors  int `json:"parse_errors"`
+			FilesSkipped int `json:"files_skipped"`
+		} `json:"summary"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("failed to decode warn output: %v", err)
+	}
+	if payload.Summary.ParseErrors != 1 || payload.Summary.FilesSkipped != 1 {
+		t.Fatalf("expected parse_errors=1 files_skipped=1, got %+v", payload.Summary)
+	}
+
+	code, out, errOut = runCmdInDir(t, dir, []string{
+		"check",
+		"--config", "archguard.yaml",
+		"--format", "json",
+		"--parse-error-policy", "error",
+	})
+	if code != 2 {
+		t.Fatalf("expected strict parse policy to exit 2, got %d stderr=%s output=%s", code, errOut, out)
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("failed to decode strict output: %v", err)
+	}
+	if payload.Summary.ParseErrors != 1 || payload.Summary.FilesSkipped != 1 {
+		t.Fatalf("expected parse_errors=1 files_skipped=1, got %+v", payload.Summary)
+	}
+}
+
+func TestCheckChangedOnlyUsesWorkingTreeDiff(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteFile(t, filepath.Join(dir, "archguard.yaml"), `version: 1
+project:
+  roots: ["src"]
+  include: ["**/*.ts"]
+  exclude: ["**/node_modules/**"]
+rules:
+  - id: AG-NO-AXIOS
+    kind: no_package
+    severity: error
+    scope: ["src/domain/**"]
+    target: ["axios"]
+`)
+	mustWriteFile(t, filepath.Join(dir, "src", "domain", "user.ts"), `export const user = 1`)
+
+	mustRunGit(t, dir, "init")
+	mustRunGit(t, dir, "config", "user.email", "test@example.com")
+	mustRunGit(t, dir, "config", "user.name", "ArchGuard Test")
+	mustRunGit(t, dir, "add", ".")
+	mustRunGit(t, dir, "commit", "-m", "initial")
+
+	mustWriteFile(t, filepath.Join(dir, "src", "domain", "user.ts"), `import axios from "axios"
+export const user = 1`)
+
+	code, out, errOut := runCmdInDir(t, dir, []string{
+		"check",
+		"--config", "archguard.yaml",
+		"--format", "json",
+		"--changed-only",
+	})
+	if code != 1 {
+		t.Fatalf("expected exit 1, got %d stderr=%s output=%s", code, errOut, out)
+	}
+	var payload struct {
+		Summary struct {
+			FilesScanned int `json:"files_scanned"`
+		} `json:"summary"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("failed to decode changed-only output: %v", err)
+	}
+	if payload.Summary.FilesScanned != 1 {
+		t.Fatalf("expected changed-only to scan 1 file, got %d", payload.Summary.FilesScanned)
+	}
+}
+
+func TestCheckChangedAgainstUsesRefRange(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteFile(t, filepath.Join(dir, "archguard.yaml"), `version: 1
+project:
+  roots: ["src"]
+  include: ["**/*.ts"]
+  exclude: ["**/node_modules/**"]
+rules:
+  - id: AG-NO-AXIOS
+    kind: no_package
+    severity: error
+    scope: ["src/domain/**"]
+    target: ["axios"]
+`)
+	mustWriteFile(t, filepath.Join(dir, "src", "domain", "user.ts"), `export const user = 1`)
+
+	mustRunGit(t, dir, "init")
+	mustRunGit(t, dir, "config", "user.email", "test@example.com")
+	mustRunGit(t, dir, "config", "user.name", "ArchGuard Test")
+	mustRunGit(t, dir, "add", ".")
+	mustRunGit(t, dir, "commit", "-m", "initial")
+
+	mustWriteFile(t, filepath.Join(dir, "src", "domain", "user.ts"), `import axios from "axios"
+export const user = 1`)
+	mustRunGit(t, dir, "add", ".")
+	mustRunGit(t, dir, "commit", "-m", "introduce axios")
+
+	code, out, errOut := runCmdInDir(t, dir, []string{
+		"check",
+		"--config", "archguard.yaml",
+		"--format", "json",
+		"--changed-against", "HEAD~1",
+	})
+	if code != 1 {
+		t.Fatalf("expected exit 1, got %d stderr=%s output=%s", code, errOut, out)
+	}
+	var payload struct {
+		Summary struct {
+			FilesScanned int `json:"files_scanned"`
+		} `json:"summary"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("failed to decode changed-against output: %v", err)
+	}
+	if payload.Summary.FilesScanned != 1 {
+		t.Fatalf("expected changed-against to scan 1 file, got %d", payload.Summary.FilesScanned)
 	}
 }
 
@@ -499,4 +717,15 @@ func mustWriteFile(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func mustRunGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, string(out))
+	}
+	return string(out)
 }

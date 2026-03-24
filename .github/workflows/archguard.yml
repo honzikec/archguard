@@ -29,7 +29,7 @@ jobs:
         id: archguard
         run: |
           set +e
-          archguard check --config archguard.yaml --format sarif > archguard-results.sarif
+          archguard check --config archguard.yaml --format sarif --parse-error-policy error > archguard-results.sarif
           code=$?
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           exit 0
@@ -42,12 +42,8 @@ jobs:
           category: archguard
 
       - name: Enforce ArchGuard result
-        if: always() && steps.archguard.outputs.exit_code == '2'
+        if: always() && steps.archguard.outputs.exit_code != '0'
         run: |
           echo "ArchGuard failed with exit code ${{ steps.archguard.outputs.exit_code }}."
-          echo "Usage/config/runtime error detected."
+          echo "Policy violations or runtime/config/usage errors detected."
           exit 1
-
-      - name: Report ArchGuard violations (non-blocking)
-        if: always() && steps.archguard.outputs.exit_code == '1'
-        run: echo "ArchGuard reported policy violations (non-blocking in this workflow). See uploaded SARIF for details."

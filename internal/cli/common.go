@@ -41,12 +41,48 @@ func severityMeetsThreshold(severity, threshold string) bool {
 	return rank[severity] >= rank[threshold]
 }
 
-func filterChangedFiles(allFiles []string) ([]string, error) {
+func resolveConfigPath(configPath string) (absPath string, configDir string, err error) {
+	path := strings.TrimSpace(configPath)
+	if path == "" {
+		path = "archguard.yaml"
+	}
+	absPath, err = filepath.Abs(path)
+	if err != nil {
+		return "", "", err
+	}
+	configDir = filepath.Dir(absPath)
+	return absPath, filepath.Clean(configDir), nil
+}
+
+func withWorkingDir(dir string, fn func() int) (int, error) {
+	original, err := os.Getwd()
+	if err != nil {
+		return 2, err
+	}
+	if err := os.Chdir(dir); err != nil {
+		return 2, err
+	}
+	defer func() { _ = os.Chdir(original) }()
+	return fn(), nil
+}
+
+func filterChangedFiles(allFiles []string, changedOnly bool, changedAgainst string) ([]string, error) {
+	against := strings.TrimSpace(changedAgainst)
+	if !changedOnly && against == "" {
+		return allFiles, nil
+	}
+
 	set := map[string]struct{}{}
-	commands := [][]string{
-		{"diff", "--name-only", "--diff-filter=ACMR"},
-		{"diff", "--name-only", "--cached", "--diff-filter=ACMR"},
-		{"ls-files", "--others", "--exclude-standard"},
+	commands := make([][]string, 0, 4)
+	if changedOnly {
+		commands = append(commands,
+			[]string{"diff", "--name-only", "--diff-filter=ACMR"},
+			[]string{"diff", "--name-only", "--cached", "--diff-filter=ACMR"},
+			[]string{"ls-files", "--others", "--exclude-standard"},
+		)
+	}
+	if against != "" {
+		commands = append(commands, []string{"diff", "--name-only", "--diff-filter=ACMR", against + "...HEAD"})
 	}
 
 	for _, args := range commands {
@@ -82,7 +118,7 @@ func gitOutput(args ...string) (string, error) {
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
-			return "", fmt.Errorf("git is required for --changed-only")
+			return "", fmt.Errorf("git is required for changed-file filtering")
 		}
 		return "", fmt.Errorf("git %s failed: %s", strings.Join(args, " "), strings.TrimSpace(stderr.String()))
 	}

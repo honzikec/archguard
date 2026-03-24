@@ -2,6 +2,8 @@
 
 `archguard.yaml` is strict and rejects unknown keys.
 
+All relative project paths (`project.roots`, `project.tsconfig`, alias targets) are resolved from the directory that contains the config file passed via `--config`.
+
 For greenfield setup from natural-language intent, use architecture brief compilation:
 - `archguard init --from-brief architecture-brief.yaml --out archguard.yaml`
 - brief format and examples: `docs/brief.md`

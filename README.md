@@ -28,6 +28,8 @@ GOCACHE=/tmp/go-build go build -o archguard ./cmd/archguard/main.go
 
 ```bash
 archguard check   --config archguard.yaml --format text|json|sarif
+archguard check   --config archguard.yaml --changed-only
+archguard check   --config archguard.yaml --changed-against origin/main --parse-error-policy error
 archguard mine    --config archguard.yaml --format text|yaml|json --catalog builtin
 archguard explain --config archguard.yaml --rule RULE_ID
 archguard init    --config archguard.yaml
@@ -37,7 +39,9 @@ archguard version
 
 Default check behavior:
 - Blocking threshold: `error`
+- Parse/read error policy: `warn` (set `--parse-error-policy=error` in CI)
 - Exit codes: `0` pass, `1` blocking violations, `2` runtime/config/usage error
+- relative project paths are resolved from the directory of `--config`
 
 Mining note:
 - `mine` uses a framework-aware normalization layer (`generic|nextjs|react|react_router|react_native|angular`) and keeps `check` semantics generic.
@@ -85,12 +89,14 @@ rules:
 
 ## GitHub Actions
 
+For production gating, run ArchGuard in enforce mode (`--parse-error-policy=error` and fail on non-zero exit).
+
 ```yaml
 - name: Install ArchGuard
   run: go install github.com/honzikec/archguard/cmd/archguard@latest
 
 - name: Run ArchGuard
-  run: archguard check --config archguard.yaml --format sarif > archguard-results.sarif
+  run: archguard check --config archguard.yaml --format sarif --parse-error-policy error > archguard-results.sarif
 
 - name: Upload SARIF
   if: always()
@@ -111,6 +117,7 @@ rules:
 - [Pattern Catalog](docs/catalog.md)
 - [Catalog Sources](docs/catalog-sources.md)
 - [GitHub CI](docs/ci-github.md)
+- [Onboarding (First 30 Minutes)](docs/onboarding-30-minutes.md)
 - [Troubleshooting](docs/troubleshooting.md)
 
 ## Contributing

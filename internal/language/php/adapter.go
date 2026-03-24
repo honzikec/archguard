@@ -2,6 +2,7 @@ package php
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"sort"
 	"strings"
@@ -49,10 +50,16 @@ func (Adapter) ParseFile(path string) ([]model.ImportRef, error) {
 	parser.SetLanguage(php.GetLanguage())
 
 	tree, err := parser.ParseCtx(context.Background(), nil, content)
-	if err != nil || tree == nil || tree.RootNode() == nil {
-		return nil, nil
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse php file: %w", err)
+	}
+	if tree == nil || tree.RootNode() == nil {
+		return nil, fmt.Errorf("failed to parse php file: empty syntax tree")
 	}
 	defer tree.Close()
+	if tree.RootNode().HasError() {
+		return nil, fmt.Errorf("failed to parse php file: syntax errors detected")
+	}
 
 	refs := make([]model.ImportRef, 0)
 	var walk func(*sitter.Node)

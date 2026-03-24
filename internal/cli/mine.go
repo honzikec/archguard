@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -78,195 +79,221 @@ func runMine(args []string) int {
 		return 2
 	}
 
-	cfg, err := loadConfigOptional(common.configPath)
+	configPath, configDir, err := resolveConfigPath(common.configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to resolve config path: %v\n", err)
+		return 2
+	}
+	cfg, err := loadConfigOptional(configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		return 2
 	}
+	effectiveRoots := resolveEffectiveRoots(configDir, cfg.Project.Roots)
 
-	languageResolution := language.Resolve(cfg.Project.Language, cfg.Project.Roots)
-	if languageResolution.Adapter == nil {
-		fmt.Fprintln(os.Stderr, "failed to resolve language adapter")
-		return 2
-	}
+	code, runErr := withWorkingDir(configDir, func() int {
+		languageResolution := language.Resolve(cfg.Project.Language, cfg.Project.Roots)
+		if languageResolution.Adapter == nil {
+			fmt.Fprintln(os.Stderr, "failed to resolve language adapter")
+			return 2
+		}
+		if common.debug {
+			fmt.Fprintf(os.Stderr, "config dir: %s\n", filepath.ToSlash(filepath.Clean(configDir)))
+			fmt.Fprintf(os.Stderr, "effective roots: %s\n", strings.Join(effectiveRoots, ", "))
+		}
 
-	files, err := fileset.DiscoverWithAdapter(cfg.Project, languageResolution.Adapter)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to discover files: %v\n", err)
-		return 2
-	}
-	resolver, err := pathutil.NewResolver(".", cfg.Project)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to initialize resolver: %v\n", err)
-		return 2
-	}
-
-	imports := make([]model.ImportRef, 0)
-	for _, file := range files {
-		parsed, err := languageResolution.Adapter.ParseFile(file)
+		files, err := fileset.DiscoverWithAdapter(cfg.Project, languageResolution.Adapter)
 		if err != nil {
-			if common.debug {
-				fmt.Fprintf(os.Stderr, "parse error %s: %v\n", file, err)
+			fmt.Fprintf(os.Stderr, "failed to discover files: %v\n", err)
+			return 2
+		}
+		resolver, err := pathutil.NewResolver(".", cfg.Project)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to initialize resolver: %v\n", err)
+			return 2
+		}
+
+		imports := make([]model.ImportRef, 0)
+		parseErrors := 0
+		for _, file := range files {
+			parsed, err := languageResolution.Adapter.ParseFile(file)
+			if err != nil {
+				parseErrors++
+				if common.debug {
+					fmt.Fprintf(os.Stderr, "parse/read error %s: %v\n", file, err)
+				}
+				continue
 			}
-			continue
-		}
-		for i := range parsed {
-			resolved, isPackage := resolver.Resolve(parsed[i].SourceFile, parsed[i].RawImport)
-			parsed[i].ResolvedPath = resolved
-			parsed[i].IsPackageImport = isPackage
-		}
-		imports = append(imports, parsed...)
-	}
-
-	workspaceRoots := append([]string{}, cfg.Project.Roots...)
-	workspaceReason := "off"
-	if *workspaceMode == "auto" {
-		discovered, err := workspace.DiscoverRoots(cfg.Project.Roots)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to discover workspaces: %v\n", err)
-			return 2
-		}
-		if len(discovered) > 0 {
-			workspaceRoots = discovered
-		}
-		if len(workspaceRoots) > 1 {
-			workspaceReason = "auto_workspaces"
-		} else {
-			workspaceReason = "auto_single"
-		}
-	}
-	if len(workspaceRoots) == 0 {
-		workspaceRoots = []string{"."}
-	}
-
-	rootFrameworkResolution := framework.Resolve(cfg.Project.Framework, cfg.Project.Roots)
-	frameworkResolution := rootFrameworkResolution
-	candidateBuckets := make([]miner.Candidate, 0)
-	totalNormalization := miner.MineNormalizationStats{}
-	var debugStats *miner.DebugStats
-	if common.debug {
-		debugStats = miner.NewDebugStats()
-	}
-
-	for _, wsRoot := range workspaceRoots {
-		wsFiles := filterFilesByWorkspace(files, wsRoot)
-		if len(wsFiles) == 0 {
-			continue
-		}
-		wsImports := filterImportsByWorkspace(imports, wsRoot)
-		wsGraph := graph.Build(wsImports, wsFiles)
-		wsFramework := framework.Resolve(cfg.Project.Framework, []string{wsRoot})
-		if len(workspaceRoots) == 1 {
-			frameworkResolution = wsFramework
-		}
-		normalizedGraph, normalizedFiles, stats := framework.NormalizeMiningInputs(wsGraph, wsFiles, wsFramework.Selected)
-		wsCandidates := miner.Propose(normalizedGraph, normalizedFiles, miner.Options{
-			MinSupport:           *minSupport,
-			MaxPrevalence:        *maxPrevalence,
-			MaxCandidatesPerKind: *maxCandidatesPerKind,
-			DebugStats:           debugStats,
-		})
-		candidateBuckets = append(candidateBuckets, wsCandidates...)
-		totalNormalization.OriginalNodes += stats.OriginalNodes
-		totalNormalization.NormalizedNodes += stats.NormalizedNodes
-		totalNormalization.OriginalFiles += stats.OriginalFiles
-		totalNormalization.NormalizedFiles += stats.NormalizedFiles
-	}
-	candidates := dedupeCandidates(candidateBuckets, *maxCandidatesPerKind)
-	catalogMatches := make([]miner.PatternMatch, 0)
-
-	if *catalogMode == "builtin" {
-		patterns, err := catalog.LoadBuiltin()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to load built-in catalog: %v\n", err)
-			return 2
-		}
-		catalogMatches, err = miner.MatchCatalog(patterns, candidates, files, cfg.Project, miner.CatalogOptions{
-			ShowLowConfidence: *showLowConfidence,
-		})
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to match catalog patterns: %v\n", err)
-			return 2
-		}
-	}
-
-	metadata := miner.MineMetadata{
-		FrameworkProfile: frameworkResolution.EffectiveProfile(),
-		FrameworkReason:  frameworkResolution.Reason,
-		FrameworkMatched: append([]string{}, frameworkResolution.Matched...),
-		LanguageAdapter:  languageResolution.Selected,
-		LanguageReason:   languageResolution.Reason,
-		Normalization: miner.MineNormalizationStats{
-			OriginalNodes:   totalNormalization.OriginalNodes,
-			NormalizedNodes: totalNormalization.NormalizedNodes,
-			OriginalFiles:   totalNormalization.OriginalFiles,
-			NormalizedFiles: totalNormalization.NormalizedFiles,
-		},
-	}
-
-	if common.debug {
-		fmt.Fprintf(os.Stderr, "mine framework profile: %s (%s)\n", metadata.FrameworkProfile, metadata.FrameworkReason)
-		if len(metadata.FrameworkMatched) > 0 {
-			sorted := append([]string{}, metadata.FrameworkMatched...)
-			sort.Strings(sorted)
-			fmt.Fprintf(os.Stderr, "mine framework matches: %s\n", strings.Join(sorted, ", "))
-		}
-		fmt.Fprintf(os.Stderr, "mine language adapter: %s (%s)\n", metadata.LanguageAdapter, metadata.LanguageReason)
-		fmt.Fprintf(os.Stderr, "mine workspaces: %d (%s)\n", len(workspaceRoots), workspaceReason)
-		fmt.Fprintf(os.Stderr, "mine normalization: nodes %d->%d files %d->%d\n",
-			metadata.Normalization.OriginalNodes,
-			metadata.Normalization.NormalizedNodes,
-			metadata.Normalization.OriginalFiles,
-			metadata.Normalization.NormalizedFiles,
-		)
-		if debugStats != nil && len(debugStats.Dropped) > 0 {
-			keys := make([]string, 0, len(debugStats.Dropped))
-			for key := range debugStats.Dropped {
-				keys = append(keys, key)
+			for i := range parsed {
+				resolved, isPackage := resolver.Resolve(parsed[i].SourceFile, parsed[i].RawImport)
+				parsed[i].ResolvedPath = resolved
+				parsed[i].IsPackageImport = isPackage
 			}
-			sort.Strings(keys)
-			for _, key := range keys {
-				fmt.Fprintf(os.Stderr, "mine dropped %s=%d\n", key, debugStats.Dropped[key])
+			imports = append(imports, parsed...)
+		}
+
+		workspaceRoots := append([]string{}, cfg.Project.Roots...)
+		workspaceReason := "off"
+		if *workspaceMode == "auto" {
+			discovered, err := workspace.DiscoverRoots(cfg.Project.Roots)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "failed to discover workspaces: %v\n", err)
+				return 2
+			}
+			if len(discovered) > 0 {
+				workspaceRoots = discovered
+			}
+			if len(workspaceRoots) > 1 {
+				workspaceReason = "auto_workspaces"
+			} else {
+				workspaceReason = "auto_single"
 			}
 		}
-	}
-
-	if *emitConfig {
-		adopted := []config.Rule{}
-		if *adoptCatalog {
-			adopted = miner.AdoptCatalogMatches(catalogMatches, *adoptThreshold)
+		if len(workspaceRoots) == 0 {
+			workspaceRoots = []string{"."}
 		}
-		fmt.Print(miner.EmitStarterConfigWithCatalog(candidates, adopted, miner.EmitOptions{
-			NoCycleSeverity: *emitNoCycleSeverity,
-		}))
-		return 0
-	}
-	if *interactive {
-		adopted := []config.Rule{}
-		if *adoptCatalog {
-			adopted = miner.AdoptCatalogMatches(catalogMatches, *adoptThreshold)
-		}
-		if err := runMineInteractive(common.configPath, cfg, candidates, adopted, *emitNoCycleSeverity); err != nil {
-			fmt.Fprintf(os.Stderr, "interactive mine failed: %v\n", err)
-			return 2
-		}
-		return 0
-	}
 
-	if len(candidates) == 0 && len(catalogMatches) == 0 && common.format == "text" {
-		fmt.Printf("No candidates discovered (min_support=%d, max_prevalence=%.4f).\n", *minSupport, *maxPrevalence)
-		return 0
-	}
+		rootFrameworkResolution := framework.Resolve(cfg.Project.Framework, cfg.Project.Roots)
+		frameworkResolution := rootFrameworkResolution
+		candidateBuckets := make([]miner.Candidate, 0)
+		totalNormalization := miner.MineNormalizationStats{}
+		var debugStats *miner.DebugStats
+		if common.debug {
+			debugStats = miner.NewDebugStats()
+		}
 
-	switch common.format {
-	case "yaml":
-		miner.PrintYAML(candidates)
-	case "json":
-		miner.PrintMineJSON(candidates, catalogMatches, metadata)
-	default:
-		miner.PrintMineText(candidates, catalogMatches, *catalogFormat, common.debug, metadata)
+		for _, wsRoot := range workspaceRoots {
+			wsFiles := filterFilesByWorkspace(files, wsRoot)
+			if len(wsFiles) == 0 {
+				continue
+			}
+			wsImports := filterImportsByWorkspace(imports, wsRoot)
+			wsGraph := graph.Build(wsImports, wsFiles)
+			wsFramework := framework.Resolve(cfg.Project.Framework, []string{wsRoot})
+			if len(workspaceRoots) == 1 {
+				frameworkResolution = wsFramework
+			}
+			normalizedGraph, normalizedFiles, stats := framework.NormalizeMiningInputs(wsGraph, wsFiles, wsFramework.Selected)
+			wsCandidates := miner.Propose(normalizedGraph, normalizedFiles, miner.Options{
+				MinSupport:           *minSupport,
+				MaxPrevalence:        *maxPrevalence,
+				MaxCandidatesPerKind: *maxCandidatesPerKind,
+				DebugStats:           debugStats,
+			})
+			candidateBuckets = append(candidateBuckets, wsCandidates...)
+			totalNormalization.OriginalNodes += stats.OriginalNodes
+			totalNormalization.NormalizedNodes += stats.NormalizedNodes
+			totalNormalization.OriginalFiles += stats.OriginalFiles
+			totalNormalization.NormalizedFiles += stats.NormalizedFiles
+		}
+		candidates := dedupeCandidates(candidateBuckets, *maxCandidatesPerKind)
+		catalogMatches := make([]miner.PatternMatch, 0)
+
+		if *catalogMode == "builtin" {
+			patterns, err := catalog.LoadBuiltin()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "failed to load built-in catalog: %v\n", err)
+				return 2
+			}
+			catalogMatches, err = miner.MatchCatalog(patterns, candidates, files, cfg.Project, miner.CatalogOptions{
+				ShowLowConfidence: *showLowConfidence,
+			})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "failed to match catalog patterns: %v\n", err)
+				return 2
+			}
+		}
+
+		metadata := miner.MineMetadata{
+			FrameworkProfile: frameworkResolution.EffectiveProfile(),
+			FrameworkReason:  frameworkResolution.Reason,
+			FrameworkMatched: append([]string{}, frameworkResolution.Matched...),
+			LanguageAdapter:  languageResolution.Selected,
+			LanguageReason:   languageResolution.Reason,
+			Normalization: miner.MineNormalizationStats{
+				OriginalNodes:   totalNormalization.OriginalNodes,
+				NormalizedNodes: totalNormalization.NormalizedNodes,
+				OriginalFiles:   totalNormalization.OriginalFiles,
+				NormalizedFiles: totalNormalization.NormalizedFiles,
+			},
+		}
+
+		if common.debug {
+			fmt.Fprintf(os.Stderr, "mine framework profile: %s (%s)\n", metadata.FrameworkProfile, metadata.FrameworkReason)
+			if len(metadata.FrameworkMatched) > 0 {
+				sorted := append([]string{}, metadata.FrameworkMatched...)
+				sort.Strings(sorted)
+				fmt.Fprintf(os.Stderr, "mine framework matches: %s\n", strings.Join(sorted, ", "))
+			}
+			fmt.Fprintf(os.Stderr, "mine language adapter: %s (%s)\n", metadata.LanguageAdapter, metadata.LanguageReason)
+			fmt.Fprintf(os.Stderr, "mine workspaces: %d (%s)\n", len(workspaceRoots), workspaceReason)
+			fmt.Fprintf(os.Stderr, "mine normalization: nodes %d->%d files %d->%d\n",
+				metadata.Normalization.OriginalNodes,
+				metadata.Normalization.NormalizedNodes,
+				metadata.Normalization.OriginalFiles,
+				metadata.Normalization.NormalizedFiles,
+			)
+			if parseErrors > 0 {
+				fmt.Fprintf(os.Stderr, "mine parse/read errors: %d file(s) skipped\n", parseErrors)
+			}
+			if debugStats != nil && len(debugStats.Dropped) > 0 {
+				keys := make([]string, 0, len(debugStats.Dropped))
+				for key := range debugStats.Dropped {
+					keys = append(keys, key)
+				}
+				sort.Strings(keys)
+				for _, key := range keys {
+					fmt.Fprintf(os.Stderr, "mine dropped %s=%d\n", key, debugStats.Dropped[key])
+				}
+			}
+		}
+
+		if *emitConfig {
+			adopted := []config.Rule{}
+			if *adoptCatalog {
+				adopted = miner.AdoptCatalogMatches(catalogMatches, *adoptThreshold)
+			}
+			fmt.Print(miner.EmitStarterConfigWithCatalog(candidates, adopted, miner.EmitOptions{
+				NoCycleSeverity: *emitNoCycleSeverity,
+			}))
+			return 0
+		}
+		if *interactive {
+			adopted := []config.Rule{}
+			if *adoptCatalog {
+				adopted = miner.AdoptCatalogMatches(catalogMatches, *adoptThreshold)
+			}
+			interactiveConfigPath := configPath
+			if rel, err := filepath.Rel(configDir, configPath); err == nil && rel != "" && !strings.HasPrefix(rel, "..") {
+				interactiveConfigPath = filepath.ToSlash(rel)
+			}
+			if err := runMineInteractive(interactiveConfigPath, cfg, candidates, adopted, *emitNoCycleSeverity); err != nil {
+				fmt.Fprintf(os.Stderr, "interactive mine failed: %v\n", err)
+				return 2
+			}
+			return 0
+		}
+
+		if len(candidates) == 0 && len(catalogMatches) == 0 && common.format == "text" {
+			fmt.Printf("No candidates discovered (min_support=%d, max_prevalence=%.4f).\n", *minSupport, *maxPrevalence)
+			return 0
+		}
+
+		switch common.format {
+		case "yaml":
+			miner.PrintYAML(candidates)
+		case "json":
+			miner.PrintMineJSON(candidates, catalogMatches, metadata)
+		default:
+			miner.PrintMineText(candidates, catalogMatches, *catalogFormat, common.debug, metadata)
+		}
+		return 0
+	})
+	if runErr != nil {
+		fmt.Fprintf(os.Stderr, "failed to set working directory: %v\n", runErr)
+		return 2
 	}
-	return 0
+	return code
 }
 
 func filterFilesByWorkspace(files []string, wsRoot string) []string {

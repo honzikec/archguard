@@ -23,3 +23,15 @@
 - v1 is strict; unknown keys fail
 - verify enum values for `kind`/`severity`
 - verify regex patterns in `file_pattern.target`
+
+## Parse/read errors in CI
+
+- run with `--parse-error-policy=error` to fail fast on skipped files
+- inspect summary fields `parse_errors` and `files_skipped`
+- use `--debug` to print per-file parse/read failures
+
+## Changed-file checks miss expected files
+
+- local mode should use `--changed-only`
+- PR mode should use `--changed-against <base_ref>` (for example `origin/main`)
+- combine both flags to union local and ref-range changes

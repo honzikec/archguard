@@ -53,12 +53,17 @@ func PrintText(findings []model.Finding, summary Summary) {
 
 func printSummary(summary Summary) {
 	fmt.Println()
-	fmt.Printf("Summary: files=%d imports=%d findings=%d (error=%d warning=%d) duration_ms=%d\n",
+	fmt.Printf("Summary: files=%d imports=%d findings=%d (error=%d warning=%d) parse_errors=%d files_skipped=%d duration_ms=%d\n",
 		summary.FilesScanned,
 		summary.ImportsScanned,
 		summary.FindingsTotal,
 		summary.FindingsError,
 		summary.FindingsWarning,
+		summary.ParseErrors,
+		summary.FilesSkipped,
 		summary.DurationMS,
 	)
+	if summary.ConfigDir != "" {
+		fmt.Printf("Config: dir=%s roots=%v\n", summary.ConfigDir, summary.EffectiveRoots)
+	}
 }
