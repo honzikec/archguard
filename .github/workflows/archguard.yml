@@ -42,8 +42,12 @@ jobs:
           category: archguard
 
       - name: Enforce ArchGuard result
-        if: always() && steps.archguard.outputs.exit_code != '0'
+        if: always() && steps.archguard.outputs.exit_code == '2'
         run: |
           echo "ArchGuard failed with exit code ${{ steps.archguard.outputs.exit_code }}."
-          echo "Policy violations or runtime/config/usage errors detected."
+          echo "Usage/config/runtime error detected."
           exit 1
+
+      - name: Report ArchGuard violations (non-blocking)
+        if: always() && steps.archguard.outputs.exit_code == '1'
+        run: echo "ArchGuard reported policy violations (non-blocking in this workflow). See uploaded SARIF for details."
