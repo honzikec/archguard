@@ -44,7 +44,7 @@ const (
 func DefaultProjectSettings() ProjectSettings {
 	return ProjectSettings{
 		Roots:   []string{"."},
-		Include: []string{"**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"},
-		Exclude: []string{"**/node_modules/**", "**/dist/**", "**/build/**", "**/.next/**", "**/coverage/**", "**/.git/**"},
+		Include: []string{"**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs", "**/*.php", "**/*.phtml"},
+		Exclude: []string{"**/node_modules/**", "**/dist/**", "**/build/**", "**/.next/**", "**/coverage/**", "**/.git/**", "**/vendor/**", "**/runtime/**", "**/storage/**", "**/cache/**", "**/migrations/**"},
 	}
 }

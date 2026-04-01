@@ -26,19 +26,30 @@
         "src/feature/controller.ts:4:new UserService"
       ],
       "proposed_rule": {
-        "ID": "AG-CAT-SERVICES-VIA-COMPOSITION-ROOT-e8d6300f",
+        "ID": "AG-CAT-SERVICES-VIA-COMPOSITION-ROOT-1b0fb910",
         "Kind": "pattern",
         "Severity": "warning",
         "Scope": [
-          "src/**"
+          "src/**",
+          "app/**",
+          "common/**",
+          "backend/**",
+          "frontend/**"
         ],
         "Target": [
-          "src/services/**"
+          "src/services/**",
+          "app/services/**",
+          "app/Services/**",
+          "common/services/**",
+          "common/Services/**"
         ],
         "Except": [
           "src/bootstrap/**",
           "src/di/**",
-          "src/main/**"
+          "src/main/**",
+          "app/bootstrap/**",
+          "config/**",
+          "console/**"
         ],
         "Template": "construction_policy",
         "Params": {

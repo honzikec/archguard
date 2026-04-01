@@ -43,10 +43,20 @@ rules:
 	if cfg.Rules[0].ID != "custom-rule" {
 		t.Errorf("expected rule ID custom-rule, got %s", cfg.Rules[0].ID)
 	}
-	
+
 	// Test defaults were applied
 	if len(cfg.Project.Roots) == 0 || cfg.Project.Roots[0] != "." {
 		t.Errorf("expected default roots ['.'], got %v", cfg.Project.Roots)
+	}
+	foundPHP := false
+	for _, pattern := range cfg.Project.Include {
+		if pattern == "**/*.php" {
+			foundPHP = true
+			break
+		}
+	}
+	if !foundPHP {
+		t.Errorf("expected default include to contain **/*.php, got %v", cfg.Project.Include)
 	}
 }
 

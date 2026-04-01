@@ -23,6 +23,10 @@ func DiscoverWithAdapter(project config.ProjectSettings, adapter contracts.Adapt
 		resolved := language.Resolve(project.Language, project.Roots)
 		adapter = resolved.Adapter
 	}
+	baseDir, err := filepath.Abs(".")
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve working directory: %w", err)
+	}
 	seen := map[string]struct{}{}
 	files := make([]string, 0)
 
@@ -34,7 +38,7 @@ func DiscoverWithAdapter(project config.ProjectSettings, adapter contracts.Adapt
 		if _, err := os.Stat(root); err != nil {
 			return nil, fmt.Errorf("project root not found: %s", root)
 		}
-		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
@@ -49,7 +53,11 @@ func DiscoverWithAdapter(project config.ProjectSettings, adapter contracts.Adapt
 				return nil
 			}
 
-			rel, err := filepath.Rel(".", path)
+			absPath, err := filepath.Abs(path)
+			if err != nil {
+				return err
+			}
+			rel, err := filepath.Rel(baseDir, absPath)
 			if err != nil {
 				return err
 			}

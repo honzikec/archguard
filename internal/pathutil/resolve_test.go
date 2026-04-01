@@ -214,6 +214,28 @@ func TestResolvePHPAliasLikeImportIsNotPackage(t *testing.T) {
 	}
 }
 
+func TestResolvePHPAliasLikeImportResolvesLocalFile(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "common", "config", "main-local.php"), `<?php`)
+	mustWrite(t, filepath.Join(dir, "backend", "config", "main.php"), `<?php`)
+
+	wd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(wd) }()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	resolver, err := pathutil.NewResolver(".", config.ProjectSettings{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, isPkg := resolver.Resolve("backend/config/main.php", "@common/config/main-local.php")
+	if isPkg || resolved != "common/config/main-local.php" {
+		t.Fatalf("expected php alias-like import to resolve locally: resolved=%s isPkg=%t", resolved, isPkg)
+	}
+}
+
 func TestResolveJSScopePackageRemainsPackage(t *testing.T) {
 	dir := t.TempDir()
 	mustWrite(t, filepath.Join(dir, "src", "index.ts"), "import x from '@scope/pkg'")

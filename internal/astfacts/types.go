@@ -24,6 +24,7 @@ type NewExpression struct {
 
 type FileFacts struct {
 	FilePath             string
+	Namespace            string
 	Classes              []ClassDecl
 	Imports              []ImportBinding
 	NewExprs             []NewExpression

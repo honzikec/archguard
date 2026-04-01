@@ -11,6 +11,7 @@ ArchGuard now routes file discovery and import parsing through a language adapte
   - supported files: `.php`, `.phtml`
   - import extraction: deterministic Tree-sitter AST extraction of `use` declarations and static `require/include` string literals
   - path resolution: relative include/require plus Composer `autoload.psr-4` / `autoload-dev.psr-4` namespace mapping
+  - framework aliases: resolves Yii-style local aliases (for example `@common/config/main.php`) when target files exist
 
 ## Selection model
 

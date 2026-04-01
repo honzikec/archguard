@@ -115,8 +115,8 @@ func EmitStarterConfigWithCatalog(candidates []Candidate, adopted []config.Rule,
 	b.WriteString("version: 1\n")
 	b.WriteString("project:\n")
 	b.WriteString("  roots: [\".\"]\n")
-	b.WriteString("  include: [\"**/*.ts\", \"**/*.tsx\", \"**/*.js\", \"**/*.jsx\", \"**/*.mjs\", \"**/*.cjs\"]\n")
-	b.WriteString("  exclude: [\"**/node_modules/**\", \"**/dist/**\", \"**/build/**\", \"**/.next/**\", \"**/coverage/**\", \"**/.git/**\"]\n")
+	b.WriteString("  include: [\"**/*.ts\", \"**/*.tsx\", \"**/*.js\", \"**/*.jsx\", \"**/*.mjs\", \"**/*.cjs\", \"**/*.php\", \"**/*.phtml\"]\n")
+	b.WriteString("  exclude: [\"**/node_modules/**\", \"**/dist/**\", \"**/build/**\", \"**/.next/**\", \"**/coverage/**\", \"**/.git/**\", \"**/vendor/**\", \"**/runtime/**\", \"**/storage/**\", \"**/cache/**\", \"**/migrations/**\"]\n")
 	b.WriteString("rules:\n")
 
 	for i, c := range candidates {

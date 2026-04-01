@@ -14,8 +14,8 @@ For greenfield setup from natural-language intent, use architecture brief compil
 version: 1
 project:
   roots: ["."]
-  include: ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"] # add "**/*.php" for PHP repos
-  exclude: ["**/node_modules/**", "**/dist/**", "**/build/**", "**/.next/**", "**/coverage/**", "**/.git/**"]
+  include: ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs", "**/*.php", "**/*.phtml"]
+  exclude: ["**/node_modules/**", "**/dist/**", "**/build/**", "**/.next/**", "**/coverage/**", "**/.git/**", "**/vendor/**", "**/runtime/**", "**/storage/**", "**/cache/**", "**/migrations/**"]
   language: auto|javascript|php # optional; defaults to auto
   framework: generic|nextjs|react|react_router|react_native|angular # optional; affects mining normalization only
   tsconfig: "tsconfig.json" # optional

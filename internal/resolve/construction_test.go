@@ -83,6 +83,75 @@ func TestResolveConstructions_UnresolvedDynamic(t *testing.T) {
 	}
 }
 
+func TestResolveConstructions_PHPImportsAndNamespaceFallback(t *testing.T) {
+	dir := t.TempDir()
+	wd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(wd) }()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	mustWrite(t, "composer.json", `{
+  "autoload": {
+    "psr-4": {
+      "App\\\\": "app/"
+    }
+  }
+}`)
+	mustWrite(t, "app/Services/MailService.php", `<?php
+namespace App\Services;
+class MailService {}
+`)
+	mustWrite(t, "app/Controllers/LocalHelper.php", `<?php
+namespace App\Controllers;
+class LocalHelper {}
+`)
+	mustWrite(t, "app/Controllers/OrderController.php", `<?php
+namespace App\Controllers;
+use App\Services\MailService as Mail;
+class OrderController {
+    public function create(): void {
+        $a = new Mail();
+        $b = new \App\Services\MailService();
+        $c = new LocalHelper();
+    }
+}
+`)
+
+	files := []string{
+		"app/Services/MailService.php",
+		"app/Controllers/LocalHelper.php",
+		"app/Controllers/OrderController.php",
+	}
+	resolved, err := resolve.ResolveConstructions(files, config.ProjectSettings{}, []string{"app/Services/**"}, ".*Service$")
+	if err != nil {
+		t.Fatalf("resolve constructions failed: %v", err)
+	}
+	if len(resolved) < 3 {
+		t.Fatalf("expected at least 3 constructions, got %d", len(resolved))
+	}
+
+	serviceHits := 0
+	localHelperResolved := false
+	for _, c := range resolved {
+		if c.FilePath != "app/Controllers/OrderController.php" || !c.IsResolved {
+			continue
+		}
+		if c.IsService {
+			serviceHits++
+		}
+		if c.ClassName == "LocalHelper" && c.ResolvedClass == "LocalHelper" {
+			localHelperResolved = true
+		}
+	}
+	if serviceHits < 2 {
+		t.Fatalf("expected both alias and fully-qualified service constructions to resolve: %+v", resolved)
+	}
+	if !localHelperResolved {
+		t.Fatalf("expected LocalHelper resolution via namespace fallback: %+v", resolved)
+	}
+}
+
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

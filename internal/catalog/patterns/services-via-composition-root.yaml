@@ -12,9 +12,9 @@ detection:
   heuristic:
     type: construction_new_outside_root
     params:
-      scope_globs: ["src/**"]
-      service_globs: ["src/services/**"]
-      allowed_new_globs: ["src/bootstrap/**", "src/di/**", "src/main/**"]
+      scope_globs: ["src/**", "app/**", "common/**", "backend/**", "frontend/**"]
+      service_globs: ["src/services/**", "app/services/**", "app/Services/**", "common/services/**", "common/Services/**"]
+      allowed_new_globs: ["src/bootstrap/**", "src/di/**", "src/main/**", "app/bootstrap/**", "config/**", "console/**"]
       service_name_regex: ".*Service$"
       max_prevalence: 0.02
       min_support: 20

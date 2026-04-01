@@ -394,6 +394,9 @@ func (r *Resolver) Resolve(sourceFile, rawImport string) (string, bool) {
 	}
 
 	if isPHPSourceFile(sourceFile) && strings.HasPrefix(rawImport, "@") {
+		if resolved, ok := r.resolvePHPAliasPath(rawImport); ok {
+			return resolved, false
+		}
 		// Yii-style aliases (e.g. @common/config/main.php) are local path aliases,
 		// not package identifiers. Keep unresolved aliases out of package constraints.
 		return "", false
@@ -419,6 +422,18 @@ func (r *Resolver) Resolve(sourceFile, rawImport string) (string, bool) {
 	}
 
 	return "", true
+}
+
+func (r *Resolver) resolvePHPAliasPath(rawImport string) (string, bool) {
+	trimmed := strings.TrimSpace(rawImport)
+	trimmed = strings.TrimPrefix(trimmed, "@")
+	trimmed = strings.TrimPrefix(trimmed, "/")
+	trimmed = strings.TrimSpace(trimmed)
+	if trimmed == "" {
+		return "", false
+	}
+	base := filepath.Join(r.root, Normalize(trimmed))
+	return r.probeLocal(base)
 }
 
 func (r *Resolver) resolvePHPNamespace(rawImport string) (string, bool) {

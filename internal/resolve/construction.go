@@ -3,6 +3,7 @@ package resolve
 import (
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/honzikec/archguard/internal/astfacts"
 	"github.com/honzikec/archguard/internal/config"
@@ -78,6 +79,7 @@ func ResolveConstructions(files []string, project config.ProjectSettings, servic
 		}
 
 		imports := map[string]importSymbol{}
+		isPHPSource := isPHPFile(file)
 		for _, imp := range facts.Imports {
 			resolvedPath, isPackage := resolver.Resolve(file, imp.Module)
 			if isPackage || resolvedPath == "" {
@@ -91,9 +93,13 @@ func ResolveConstructions(files []string, project config.ProjectSettings, servic
 				}
 			}
 			for local, imported := range imp.Named {
+				importKind := "named"
+				if isPHPSource {
+					importKind = "php_use"
+				}
 				imports[local] = importSymbol{
 					path:         resolvedPath,
-					kind:         "named",
+					kind:         importKind,
 					importedName: imported,
 				}
 			}
@@ -152,6 +158,35 @@ func ResolveConstructions(files []string, project config.ProjectSettings, servic
 				continue
 			}
 
+			if isPHPSource && strings.Contains(n.ClassName, `\`) {
+				if viaNamespace, ok := resolvePHPClassByReference(resolver, factsByFile, file, n.ClassName); ok {
+					viaNamespace.FilePath = r.FilePath
+					viaNamespace.Line = r.Line
+					viaNamespace.Column = r.Column
+					viaNamespace.ClassName = r.ClassName
+					if _, ok := serviceClassByFile[viaNamespace.ResolvedFile][viaNamespace.ResolvedClass]; ok {
+						viaNamespace.IsService = true
+					}
+					resolved = append(resolved, viaNamespace)
+					continue
+				}
+			}
+
+			if isPHPSource && facts.Namespace != "" {
+				qualified := facts.Namespace + `\` + n.ClassName
+				if viaNamespace, ok := resolvePHPClassByReference(resolver, factsByFile, file, qualified); ok {
+					viaNamespace.FilePath = r.FilePath
+					viaNamespace.Line = r.Line
+					viaNamespace.Column = r.Column
+					viaNamespace.ClassName = r.ClassName
+					if _, ok := serviceClassByFile[viaNamespace.ResolvedFile][viaNamespace.ResolvedClass]; ok {
+						viaNamespace.IsService = true
+					}
+					resolved = append(resolved, viaNamespace)
+					continue
+				}
+			}
+
 			r.UnresolvedReason = "symbol_not_resolved"
 			resolved = append(resolved, r)
 		}
@@ -176,6 +211,15 @@ func resolveImportedClass(facts astfacts.FileFacts, imp importSymbol) (string, b
 		}
 		return facts.DefaultExportedClass, true
 	}
+	if imp.kind == "php_use" {
+		if hasClass(facts, imp.importedName) {
+			return imp.importedName, true
+		}
+		if len(facts.Classes) == 1 {
+			return facts.Classes[0].Name, true
+		}
+		return "", false
+	}
 
 	className, ok := facts.ExportedClassByName[imp.importedName]
 	if !ok || className == "" {
@@ -194,4 +238,43 @@ func hasClass(facts astfacts.FileFacts, className string) bool {
 		}
 	}
 	return false
+}
+
+func isPHPFile(path string) bool {
+	path = strings.ToLower(path)
+	return strings.HasSuffix(path, ".php") || strings.HasSuffix(path, ".phtml")
+}
+
+func resolvePHPClassByReference(resolver *pathutil.Resolver, factsByFile map[string]astfacts.FileFacts, sourceFile, classReference string) (ResolvedConstruction, bool) {
+	resolvedPath, isPackage := resolver.Resolve(sourceFile, classReference)
+	if isPackage || resolvedPath == "" {
+		return ResolvedConstruction{}, false
+	}
+	targetFacts, ok := factsByFile[resolvedPath]
+	if !ok {
+		return ResolvedConstruction{}, false
+	}
+	className := phpClassLeaf(classReference)
+	if className == "" {
+		return ResolvedConstruction{}, false
+	}
+	if !hasClass(targetFacts, className) {
+		return ResolvedConstruction{}, false
+	}
+	return ResolvedConstruction{
+		IsResolved:    true,
+		ResolvedFile:  resolvedPath,
+		ResolvedClass: className,
+	}, true
+}
+
+func phpClassLeaf(v string) string {
+	v = strings.TrimSpace(v)
+	v = strings.TrimPrefix(v, `\`)
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return ""
+	}
+	parts := strings.Split(v, `\`)
+	return strings.TrimSpace(parts[len(parts)-1])
 }

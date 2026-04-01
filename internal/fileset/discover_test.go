@@ -3,6 +3,7 @@ package fileset
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/honzikec/archguard/internal/config"
@@ -42,5 +43,32 @@ func TestDiscoverWithAdapterUsesSupportedFileFilter(t *testing.T) {
 	}
 	if len(files) != 1 || files[0] != "a.foo" {
 		t.Fatalf("expected adapter-filtered files, got %+v", files)
+	}
+}
+
+func TestDiscoverWithAdapterSupportsAbsoluteRoots(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.foo"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	wd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(wd) }()
+	if err := os.Chdir(filepath.Dir(dir)); err != nil {
+		t.Fatal(err)
+	}
+
+	files, err := DiscoverWithAdapter(config.ProjectSettings{
+		Roots:   []string{dir},
+		Include: []string{"**/*.foo"},
+	}, fakeAdapter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("expected one discovered file, got %+v", files)
+	}
+	if got := files[0]; !strings.HasSuffix(got, "/a.foo") && got != "a.foo" {
+		t.Fatalf("unexpected discovered file path: %s", got)
 	}
 }

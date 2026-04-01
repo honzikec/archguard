@@ -329,6 +329,8 @@ project:
     - "**/*.jsx"
     - "**/*.mjs"
     - "**/*.cjs"
+    - "**/*.php"
+    - "**/*.phtml"
   exclude:
     - "**/node_modules/**"
     - "**/dist/**"
@@ -336,6 +338,11 @@ project:
     - "**/.next/**"
     - "**/coverage/**"
     - "**/.git/**"
+    - "**/vendor/**"
+    - "**/runtime/**"
+    - "**/storage/**"
+    - "**/cache/**"
+    - "**/migrations/**"
   language: auto
   framework: generic
   aliases: {}
@@ -365,6 +372,7 @@ rules:
       - "src/services/**"
     target:
       - "^.*\\.service\\.(ts|js)$"
+      - "^.*Service\\.php$"
 
   - id: AG-NO-CYCLES
     kind: no_cycle

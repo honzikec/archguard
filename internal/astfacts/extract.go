@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	sitter "github.com/smacker/go-tree-sitter"
+	"github.com/smacker/go-tree-sitter/php"
 	"github.com/smacker/go-tree-sitter/typescript/tsx"
 	"github.com/smacker/go-tree-sitter/typescript/typescript"
 )
@@ -27,7 +28,9 @@ func ParseContent(path string, content []byte) FileFacts {
 
 	parser := sitter.NewParser()
 	defer parser.Close()
-	if isTSX(path) {
+	if isPHP(path) {
+		parser.SetLanguage(php.GetLanguage())
+	} else if isTSX(path) {
 		parser.SetLanguage(tsx.GetLanguage())
 	} else {
 		parser.SetLanguage(typescript.GetLanguage())
@@ -54,6 +57,12 @@ func ParseContent(path string, content []byte) FileFacts {
 					Line: int(nameNode.StartPoint().Row) + 1,
 				})
 			}
+		case "namespace_definition":
+			if nsNode := findNamedChildByType(node, "namespace_name"); nsNode != nil {
+				facts.Namespace = normalizePHPNamespace(nsNode.Content(content))
+			}
+		case "namespace_use_declaration":
+			facts.Imports = append(facts.Imports, parsePHPNamespaceUseDeclaration(node, content)...)
 		case "export_statement":
 			parseExportStatement(node, content, &facts)
 		case "import_statement":
@@ -73,6 +82,30 @@ func ParseContent(path string, content []byte) FileFacts {
 				if constructor.Type() == "identifier" {
 					className = constructor.Content(content)
 					isIdentifier = true
+				}
+			}
+			facts.NewExprs = append(facts.NewExprs, NewExpression{
+				ClassName:       className,
+				Line:            int(node.StartPoint().Row) + 1,
+				Column:          int(node.StartPoint().Column) + 1,
+				Raw:             node.Content(content),
+				IsIdentifier:    isIdentifier,
+				ConstructorKind: kind,
+			})
+		case "object_creation_expression":
+			constructor := node.NamedChild(0)
+			className := ""
+			isIdentifier := false
+			kind := ""
+			if constructor != nil {
+				kind = constructor.Type()
+				switch constructor.Type() {
+				case "name":
+					className = constructor.Content(content)
+					isIdentifier = true
+				case "qualified_name":
+					className = normalizePHPNamespace(constructor.Content(content))
+					isIdentifier = className != ""
 				}
 			}
 			facts.NewExprs = append(facts.NewExprs, NewExpression{
@@ -198,6 +231,91 @@ func parseImportStatement(node *sitter.Node, content []byte) (ImportBinding, boo
 	return binding, true
 }
 
+func parsePHPNamespaceUseDeclaration(node *sitter.Node, content []byte) []ImportBinding {
+	if node == nil {
+		return nil
+	}
+
+	out := make([]ImportBinding, 0)
+	for _, clause := range findNamedChildrenByType(node, "namespace_use_clause") {
+		if b, ok := parsePHPUseClause(clause, "", content); ok {
+			out = append(out, b)
+		}
+	}
+
+	prefix := ""
+	if groupPrefix := findNamedChildByType(node, "namespace_name"); groupPrefix != nil {
+		prefix = normalizePHPNamespace(groupPrefix.Content(content))
+	}
+	for _, group := range findNamedChildrenByType(node, "namespace_use_group") {
+		for _, clause := range findNamedChildrenByType(group, "namespace_use_group_clause") {
+			if b, ok := parsePHPUseClause(clause, prefix, content); ok {
+				out = append(out, b)
+			}
+		}
+	}
+	return out
+}
+
+func parsePHPUseClause(clause *sitter.Node, prefix string, content []byte) (ImportBinding, bool) {
+	rawPath := extractPHPUsePath(clause, content)
+	rawPath = normalizePHPNamespace(rawPath)
+	if rawPath == "" {
+		return ImportBinding{}, false
+	}
+	if prefix != "" {
+		rawPath = normalizePHPNamespace(prefix + `\` + rawPath)
+	}
+
+	importedName := phpNamespaceLeaf(rawPath)
+	localName := extractPHPUseAlias(clause, content)
+	if localName == "" {
+		localName = importedName
+	}
+	localName = strings.TrimSpace(localName)
+	if localName == "" || importedName == "" {
+		return ImportBinding{}, false
+	}
+
+	return ImportBinding{
+		Module: rawPath,
+		Named: map[string]string{
+			localName: importedName,
+		},
+		Line: int(clause.StartPoint().Row) + 1,
+	}, true
+}
+
+func extractPHPUsePath(node *sitter.Node, content []byte) string {
+	if node == nil {
+		return ""
+	}
+	for i := 0; i < int(node.NamedChildCount()); i++ {
+		child := node.NamedChild(i)
+		switch child.Type() {
+		case "qualified_name", "namespace_name", "name":
+			return child.Content(content)
+		}
+	}
+	return ""
+}
+
+func extractPHPUseAlias(node *sitter.Node, content []byte) string {
+	if node == nil {
+		return ""
+	}
+	for i := 0; i < int(node.NamedChildCount()); i++ {
+		child := node.NamedChild(i)
+		if child.Type() != "namespace_aliasing_clause" {
+			continue
+		}
+		if alias := findNamedChildByType(child, "name"); alias != nil {
+			return strings.TrimSpace(alias.Content(content))
+		}
+	}
+	return ""
+}
+
 func findNamedChildByType(node *sitter.Node, typeName string) *sitter.Node {
 	for i := 0; i < int(node.NamedChildCount()); i++ {
 		child := node.NamedChild(i)
@@ -206,6 +324,17 @@ func findNamedChildByType(node *sitter.Node, typeName string) *sitter.Node {
 		}
 	}
 	return nil
+}
+
+func findNamedChildrenByType(node *sitter.Node, typeName string) []*sitter.Node {
+	out := make([]*sitter.Node, 0)
+	for i := 0; i < int(node.NamedChildCount()); i++ {
+		child := node.NamedChild(i)
+		if child.Type() == typeName {
+			out = append(out, child)
+		}
+	}
+	return out
 }
 
 func hasToken(node *sitter.Node, tokenType string) bool {
@@ -231,4 +360,25 @@ func trimQuotes(s string) string {
 func isTSX(path string) bool {
 	path = strings.ToLower(path)
 	return strings.HasSuffix(path, ".tsx") || strings.HasSuffix(path, ".jsx")
+}
+
+func isPHP(path string) bool {
+	path = strings.ToLower(path)
+	return strings.HasSuffix(path, ".php") || strings.HasSuffix(path, ".phtml")
+}
+
+func normalizePHPNamespace(v string) string {
+	v = strings.TrimSpace(v)
+	v = strings.TrimPrefix(v, `\`)
+	v = strings.TrimSuffix(v, `\`)
+	return strings.TrimSpace(v)
+}
+
+func phpNamespaceLeaf(v string) string {
+	v = normalizePHPNamespace(v)
+	if v == "" {
+		return ""
+	}
+	parts := strings.Split(v, `\`)
+	return strings.TrimSpace(parts[len(parts)-1])
 }

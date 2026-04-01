@@ -12,8 +12,8 @@ detection:
   heuristic:
     type: prevalence_boundary
     params:
-      source_globs: ["**/ui/**"]
-      target_globs: ["**/domain/**"]
+      source_globs: ["**/ui/**", "**/UI/**"]
+      target_globs: ["**/domain/**", "**/Domain/**"]
       max_prevalence: 0.02
       min_support: 20
 rule_template:
