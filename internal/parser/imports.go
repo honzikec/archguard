@@ -139,12 +139,10 @@ func callExpressionImport(node *sitter.Node, content []byte) (importMatch, bool)
 		return importMatch{}, kind == "dynamic_import"
 	}
 
-	for i := 0; i < int(args.NamedChildCount()); i++ {
-		child := args.NamedChild(i)
-		if raw, ok := stringLiteralContent(child, content); ok {
+	if args.NamedChildCount() > 0 {
+		if raw, ok := stringLiteralContent(args.NamedChild(0), content); ok {
 			return nodeMatch(node, raw, kind), false
 		}
-		break
 	}
 
 	return importMatch{}, kind == "dynamic_import"
