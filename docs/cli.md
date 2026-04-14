@@ -12,6 +12,8 @@ Flags:
 - `--parse-error-policy` (`warn|error`, default `warn`)
 - `--severity-threshold` (`warning|error`, default `error`)
 - `--max-findings` (`0` = unlimited)
+- `--baseline` (suppress findings present in a baseline JSON file)
+- `--write-baseline` (write current findings to a baseline JSON file and exit successfully)
 
 Exit codes:
 - `0` no blocking findings
@@ -27,6 +29,11 @@ Parse/read errors:
 - summary includes `parse_errors` and `files_skipped`
 - with `--parse-error-policy=warn`, scan continues (default)
 - with `--parse-error-policy=error`, check exits `2` when parse/read errors occur
+
+Baselines:
+- `--write-baseline archguard-baseline.json` records the current finding fingerprints for brownfield adoption
+- `--baseline archguard-baseline.json` suppresses only matching fingerprints
+- suppressed findings are omitted from SARIF and counted as `suppressed_findings` in text/JSON summaries
 
 ## `archguard mine`
 

@@ -1,3 +1,4 @@
+$schema: "./schemas/archguard.v1.schema.json"
 version: 1
 project:
   roots:
@@ -5,6 +6,8 @@ project:
   include:
     - "**/*.ts"
     - "**/*.tsx"
+    - "**/*.mts"
+    - "**/*.cts"
     - "**/*.js"
     - "**/*.jsx"
     - "**/*.mjs"

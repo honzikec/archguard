@@ -12,6 +12,7 @@ func TestLoadConfig(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "archguard.yaml")
 	content := []byte(`
+$schema: "./schemas/archguard.v1.schema.json"
 version: 1
 project:
   language: javascript
@@ -33,6 +34,9 @@ rules:
 
 	if cfg.Version != 1 {
 		t.Errorf("expected version 1, got %d", cfg.Version)
+	}
+	if cfg.Schema != "./schemas/archguard.v1.schema.json" {
+		t.Errorf("expected schema field to round-trip, got %s", cfg.Schema)
 	}
 	if cfg.Project.Language != "javascript" {
 		t.Errorf("expected language javascript, got %s", cfg.Project.Language)

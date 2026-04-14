@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      max-parallel: 1
+      matrix:
+        include:
+          - os: ubuntu-latest
+            config: .goreleaser.yml
+          - os: macos-13
+            config: .goreleaser.darwin.yml
+          - os: windows-latest
+            config: .goreleaser.windows.yml
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean -f ${{ matrix.config }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

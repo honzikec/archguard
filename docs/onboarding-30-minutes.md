@@ -5,7 +5,7 @@ This guide gets ArchGuard usable in a real repository quickly, including monorep
 ## 1) Install and run baseline (5 minutes)
 
 ```bash
-go install github.com/honzikec/archguard/cmd/archguard@latest
+go install github.com/honzikec/archguard/cmd/archguard@vX.Y.Z
 archguard init
 archguard check --config archguard.yaml --format text
 ```

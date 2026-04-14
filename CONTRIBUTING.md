@@ -2,13 +2,14 @@
 
 ## Prerequisites
 
-- Go 1.21+
+- Go 1.24+
 
 ## Build and test
 
 ```bash
 GOCACHE=/tmp/go-build go build -o archguard ./cmd/archguard/main.go
 GOCACHE=/tmp/go-build go test ./...
+GOCACHE=/tmp/go-build go vet ./...
 ```
 
 ## Development notes
@@ -20,6 +21,7 @@ GOCACHE=/tmp/go-build go test ./...
 - Framework profiles must stay encapsulated (`internal/framework/profiles/<id>`)
 - Language parsing/discovery changes should go through language adapters (`internal/language/*`)
 - Prefer focused PRs: one framework profile or one language adapter per PR
+- Release metadata is injected through GoReleaser ldflags; keep `archguard version` stable
 
 ## Fixture expectations
 

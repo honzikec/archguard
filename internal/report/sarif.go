@@ -10,7 +10,7 @@ import (
 	sarif "github.com/owenrumney/go-sarif/v3/pkg/report/v210/sarif"
 )
 
-func PrintSARIF(findings []model.Finding, summary Summary) {
+func PrintSARIF(findings []model.Finding, summary Summary) error {
 	report := sarifreport.NewV210Report()
 	run := sarif.NewRunWithInformationURI("ArchGuard", "https://github.com/honzikec/archguard")
 	run.WithProperties(sarif.NewPropertyBag().Add("summary", summary))
@@ -57,6 +57,7 @@ func PrintSARIF(findings []model.Finding, summary Summary) {
 		fmt.Fprintf(os.Stderr, "warning: generated SARIF failed validation: %v\n", err)
 	}
 	if err := report.PrettyWrite(os.Stdout); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to write SARIF output: %v\n", err)
+		return fmt.Errorf("failed to write SARIF output: %w", err)
 	}
+	return nil
 }

@@ -1,7 +1,8 @@
+$schema: "./schemas/archguard.v1.schema.json"
 version: 1
 project:
   roots: ["."]
-  include: ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs", "**/*.php", "**/*.phtml"]
+  include: ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs", "**/*.php", "**/*.phtml"]
   exclude: ["**/node_modules/**", "**/dist/**", "**/build/**", "**/.next/**", "**/coverage/**", "**/.git/**", "**/vendor/**", "**/runtime/**", "**/storage/**", "**/cache/**", "**/migrations/**"]
 rules:
   - id: AG-CAT-SERVICES-VIA-COMPOSITION-ROOT-1b0fb910

@@ -24,7 +24,7 @@ func (Adapter) Detect(roots []string) contracts.Detection {
 	if common.HasAnyFileNamed(roots, []string{"tsconfig.json", "jsconfig.json"}) {
 		return contracts.Detection{Matched: true, Reason: "tsconfig/jsconfig found"}
 	}
-	if common.HasFileWithSuffix(roots, []string{".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}, 8) {
+	if common.HasFileWithSuffix(roots, jsExtensions(), 8) {
 		return contracts.Detection{Matched: true, Reason: "js/ts files detected"}
 	}
 	return contracts.Detection{}
@@ -34,7 +34,7 @@ func (Adapter) SupportsFile(path string) bool {
 	if strings.Contains(path, ".gen.") {
 		return false
 	}
-	for _, ext := range []string{".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"} {
+	for _, ext := range jsExtensions() {
 		if strings.HasSuffix(path, ext) {
 			return true
 		}
@@ -43,9 +43,18 @@ func (Adapter) SupportsFile(path string) bool {
 }
 
 func (Adapter) ParseFile(path string) ([]model.ImportRef, error) {
+	imports, _, err := Adapter{}.ParseFileWithDiagnostics(path)
+	return imports, err
+}
+
+func (Adapter) ParseFileWithDiagnostics(path string) ([]model.ImportRef, contracts.ParseDiagnostics, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, contracts.ParseDiagnostics{}, err
 	}
-	return parser.ExtractImports(path, content), nil
+	return parser.ExtractImportsWithDiagnostics(path, content)
+}
+
+func jsExtensions() []string {
+	return []string{".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"}
 }

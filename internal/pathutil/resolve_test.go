@@ -388,6 +388,78 @@ func TestResolveAliasFromJSONCTSConfig(t *testing.T) {
 	}
 }
 
+func TestResolveAliasFromExtendedTSConfig(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "src", "infra", "db.ts"), "export const db = {}")
+	mustWrite(t, filepath.Join(dir, "tsconfig.base.json"), `{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@base/*": ["src/*"]
+    }
+  }
+}`)
+	mustWrite(t, filepath.Join(dir, "tsconfig.json"), `{
+  "extends": "./tsconfig.base",
+  "compilerOptions": {
+    "paths": {
+      "@app/*": ["src/*"]
+    }
+  }
+}`)
+
+	wd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(wd) }()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	resolver, err := pathutil.NewResolver(".", config.ProjectSettings{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, isPkg := resolver.Resolve("src/domain/user.ts", "@base/infra/db")
+	if isPkg || resolved != "src/infra/db.ts" {
+		t.Fatalf("unexpected inherited alias resolution: resolved=%s isPkg=%t", resolved, isPkg)
+	}
+	resolved, isPkg = resolver.Resolve("src/domain/user.ts", "@app/infra/db")
+	if isPkg || resolved != "src/infra/db.ts" {
+		t.Fatalf("unexpected child alias resolution: resolved=%s isPkg=%t", resolved, isPkg)
+	}
+}
+
+func TestResolveBaseURLAndModernExtensions(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "src", "lib", "thing.mts"), "export const thing = 1")
+	mustWrite(t, filepath.Join(dir, "src", "lib", "other.cts"), "export const other = 1")
+	mustWrite(t, filepath.Join(dir, "tsconfig.json"), `{
+  "compilerOptions": {
+    "baseUrl": "src"
+  }
+}`)
+
+	wd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(wd) }()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	resolver, err := pathutil.NewResolver(".", config.ProjectSettings{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, isPkg := resolver.Resolve("src/domain/user.ts", "lib/thing")
+	if isPkg || resolved != "src/lib/thing.mts" {
+		t.Fatalf("unexpected baseUrl .mts resolution: resolved=%s isPkg=%t", resolved, isPkg)
+	}
+	resolved, isPkg = resolver.Resolve("src/domain/user.ts", "lib/other")
+	if isPkg || resolved != "src/lib/other.cts" {
+		t.Fatalf("unexpected baseUrl .cts resolution: resolved=%s isPkg=%t", resolved, isPkg)
+	}
+}
+
 func TestResolverAcceptsCommentedTSConfigWithoutCompilerOptions(t *testing.T) {
 	dir := t.TempDir()
 	mustWrite(t, filepath.Join(dir, "tsconfig.json"), `/* generated */

@@ -1,6 +1,7 @@
 package config
 
 type Config struct {
+	Schema  string          `yaml:"$schema,omitempty"`
 	Version int             `yaml:"version"`
 	Project ProjectSettings `yaml:"project"`
 	Rules   []Rule          `yaml:"rules"`
@@ -44,7 +45,7 @@ const (
 func DefaultProjectSettings() ProjectSettings {
 	return ProjectSettings{
 		Roots:   []string{"."},
-		Include: []string{"**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs", "**/*.php", "**/*.phtml"},
+		Include: []string{"**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs", "**/*.php", "**/*.phtml"},
 		Exclude: []string{"**/node_modules/**", "**/dist/**", "**/build/**", "**/.next/**", "**/coverage/**", "**/.git/**", "**/vendor/**", "**/runtime/**", "**/storage/**", "**/cache/**", "**/migrations/**"},
 	}
 }

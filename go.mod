@@ -9,6 +9,7 @@ require (
 	github.com/owenrumney/go-sarif/v3 v3.3.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82
+	github.com/tailscale/hujson v0.0.0-20260302212456-ecc657c15afd
 )
 
 require (

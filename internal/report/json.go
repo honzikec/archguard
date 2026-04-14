@@ -3,6 +3,7 @@ package report
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 
 	"github.com/honzikec/archguard/internal/model"
 )
@@ -20,7 +21,7 @@ type jsonFinding struct {
 	Details     string `json:"details,omitempty"`
 }
 
-func PrintJSON(findings []model.Finding, summary Summary) {
+func PrintJSON(findings []model.Finding, summary Summary) error {
 	items := make([]jsonFinding, 0, len(findings))
 	for _, f := range findings {
 		items = append(items, jsonFinding{
@@ -45,6 +46,10 @@ func PrintJSON(findings []model.Finding, summary Summary) {
 		Summary:  summary,
 	}
 
-	data, _ := json.MarshalIndent(payload, "", "  ")
-	fmt.Println(string(data))
+	data, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(os.Stdout, string(data))
+	return err
 }

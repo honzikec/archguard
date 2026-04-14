@@ -22,14 +22,18 @@ jobs:
         with:
           go-version-file: 'go.mod'
 
-      - name: Install ArchGuard
-        run: go install github.com/honzikec/archguard/cmd/archguard@latest
+      - name: Build ArchGuard
+        run: |
+          mkdir -p bin
+          go build \
+            -ldflags "-X github.com/honzikec/archguard/internal/cli.Version=dev -X github.com/honzikec/archguard/internal/cli.Commit=${GITHUB_SHA} -X github.com/honzikec/archguard/internal/cli.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -o ./bin/archguard ./cmd/archguard
 
       - name: Run ArchGuard
         id: archguard
         run: |
           set +e
-          archguard check --config archguard.yaml --format sarif --parse-error-policy error > archguard-results.sarif
+          ./bin/archguard check --config archguard.yaml --format sarif --parse-error-policy error > archguard-results.sarif
           code=$?
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           exit 0

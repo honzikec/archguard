@@ -1,33 +1,90 @@
 package parser
 
 import (
-	"regexp"
+	"context"
+	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 
+	sitter "github.com/smacker/go-tree-sitter"
+	"github.com/smacker/go-tree-sitter/typescript/tsx"
+	"github.com/smacker/go-tree-sitter/typescript/typescript"
+
+	"github.com/honzikec/archguard/internal/language/contracts"
 	"github.com/honzikec/archguard/internal/model"
 )
 
-var (
-	reImportStmt = regexp.MustCompile(`(?m)^\s*import(?:\s+[^'\n;]*?\s+from)?\s*['\"]([^'\"]+)['\"]`)
-	reExportFrom = regexp.MustCompile(`(?m)^\s*export(?:\s+[^'\n;]*?\s+from)\s*['\"]([^'\"]+)['\"]`)
-)
-
 type importMatch struct {
-	start int
-	end   int
-	raw   string
-	kind  string
+	start  int
+	line   int
+	column int
+	raw    string
+	kind   string
 }
 
 func ExtractImports(path string, content []byte) []model.ImportRef {
-	text := string(content)
-	masked := maskComments(text)
+	imports, _, _ := ExtractImportsWithDiagnostics(path, content)
+	return imports
+}
+
+func ExtractImportsWithDiagnostics(path string, content []byte) ([]model.ImportRef, contracts.ParseDiagnostics, error) {
+	p := sitter.NewParser()
+	defer p.Close()
+	if isJSXLike(path) {
+		p.SetLanguage(tsx.GetLanguage())
+	} else {
+		p.SetLanguage(typescript.GetLanguage())
+	}
+
+	tree, err := p.ParseCtx(context.Background(), nil, content)
+	if err != nil {
+		return nil, contracts.ParseDiagnostics{}, fmt.Errorf("failed to parse js/ts file: %w", err)
+	}
+	if tree == nil || tree.RootNode() == nil {
+		return nil, contracts.ParseDiagnostics{}, fmt.Errorf("failed to parse js/ts file: empty syntax tree")
+	}
+	defer tree.Close()
+	if tree.RootNode().HasError() {
+		return nil, contracts.ParseDiagnostics{}, fmt.Errorf("failed to parse js/ts file: syntax errors detected")
+	}
+
 	matches := make([]importMatch, 0)
-	matches = append(matches, collectMatches(masked, reImportStmt, "import")...)
-	matches = append(matches, collectMatches(masked, reExportFrom, "export_from")...)
-	matches = append(matches, collectCallMatches(masked, "require", "require")...)
-	matches = append(matches, collectCallMatches(masked, "import", "dynamic_import")...)
+	diagnostics := contracts.ParseDiagnostics{}
+	var walk func(*sitter.Node)
+	walk = func(node *sitter.Node) {
+		if node == nil {
+			return
+		}
+
+		switch node.Type() {
+		case "import_statement":
+			if source := node.ChildByFieldName("source"); source != nil {
+				if raw, ok := stringLiteralContent(source, content); ok {
+					matches = append(matches, nodeMatch(node, raw, "import"))
+				}
+			}
+		case "export_statement":
+			if source := node.ChildByFieldName("source"); source != nil {
+				if raw, ok := stringLiteralContent(source, content); ok {
+					matches = append(matches, nodeMatch(node, raw, "export_from"))
+				}
+			}
+		case "call_expression":
+			match, nonLiteralDynamic := callExpressionImport(node, content)
+			if nonLiteralDynamic {
+				diagnostics.NonLiteralDynamicImports++
+			}
+			if match.raw != "" {
+				matches = append(matches, match)
+			}
+		}
+
+		for i := 0; i < int(node.NamedChildCount()); i++ {
+			walk(node.NamedChild(i))
+		}
+	}
+	walk(tree.RootNode())
 
 	sort.Slice(matches, func(i, j int) bool {
 		if matches[i].start == matches[j].start {
@@ -39,327 +96,116 @@ func ExtractImports(path string, content []byte) []model.ImportRef {
 	seen := map[string]struct{}{}
 	imports := make([]model.ImportRef, 0, len(matches))
 	for _, m := range matches {
-		key := m.kind + "|" + m.raw + "|" + itoa(m.start)
+		key := fmt.Sprintf("%s|%s|%d", m.kind, m.raw, m.start)
 		if _, ok := seen[key]; ok {
 			continue
 		}
 		seen[key] = struct{}{}
-		line, col := lineCol(content, m.start)
 		imports = append(imports, model.ImportRef{
 			SourceFile:      path,
 			RawImport:       strings.TrimSpace(m.raw),
 			ResolvedPath:    "",
 			IsPackageImport: tentativePackageImport(m.raw),
-			Line:            line,
-			Column:          col,
+			Line:            m.line,
+			Column:          m.column,
 			Kind:            m.kind,
 		})
 	}
 
-	return imports
+	return imports, diagnostics, nil
 }
 
-func collectCallMatches(text, keyword, kind string) []importMatch {
-	out := make([]importMatch, 0)
-	if keyword == "" {
-		return out
+func callExpressionImport(node *sitter.Node, content []byte) (importMatch, bool) {
+	fn := node.ChildByFieldName("function")
+	if fn == nil {
+		return importMatch{}, false
 	}
-	inSingle := false
-	inDouble := false
-	inTemplate := false
-	escaped := false
-
-	for i := 0; i < len(text); i++ {
-		c := text[i]
-		if inSingle {
-			if escaped {
-				escaped = false
-				continue
-			}
-			if c == '\\' {
-				escaped = true
-				continue
-			}
-			if c == '\'' {
-				inSingle = false
-			}
-			continue
-		}
-		if inDouble {
-			if escaped {
-				escaped = false
-				continue
-			}
-			if c == '\\' {
-				escaped = true
-				continue
-			}
-			if c == '"' {
-				inDouble = false
-			}
-			continue
-		}
-		if inTemplate {
-			if escaped {
-				escaped = false
-				continue
-			}
-			if c == '\\' {
-				escaped = true
-				continue
-			}
-			if c == '`' {
-				inTemplate = false
-			}
-			continue
-		}
-
-		switch c {
-		case '\'':
-			inSingle = true
-			continue
-		case '"':
-			inDouble = true
-			continue
-		case '`':
-			inTemplate = true
-			continue
-		}
-
-		if !hasTokenAt(text, i, keyword) {
-			continue
-		}
-		tokenEnd := i + len(keyword)
-		if !isCallTokenBoundary(text, i, tokenEnd) {
-			continue
-		}
-
-		j := skipWhitespace(text, tokenEnd)
-		if j >= len(text) || text[j] != '(' {
-			continue
-		}
-		j = skipWhitespace(text, j+1)
-		if j >= len(text) || (text[j] != '"' && text[j] != '\'') {
-			continue
-		}
-
-		quote := text[j]
-		rawStart := j + 1
-		j++
-		escaped = false
-		for ; j < len(text); j++ {
-			if escaped {
-				escaped = false
-				continue
-			}
-			if text[j] == '\\' {
-				escaped = true
-				continue
-			}
-			if text[j] == quote {
-				break
-			}
-		}
-		if j >= len(text) {
-			continue
-		}
-		rawEnd := j
-		j = skipWhitespace(text, j+1)
-		if j >= len(text) || text[j] != ')' {
-			continue
-		}
-
-		out = append(out, importMatch{
-			start: i,
-			end:   j + 1,
-			raw:   text[rawStart:rawEnd],
-			kind:  kind,
-		})
-		i = j
+	name := strings.TrimSpace(fn.Content(content))
+	kind := ""
+	switch name {
+	case "require":
+		kind = "require"
+	case "import":
+		kind = "dynamic_import"
+	default:
+		return importMatch{}, false
 	}
-	return out
+
+	args := node.ChildByFieldName("arguments")
+	if args == nil {
+		args = firstNamedChildOfType(node, "arguments")
+	}
+	if args == nil {
+		return importMatch{}, kind == "dynamic_import"
+	}
+
+	for i := 0; i < int(args.NamedChildCount()); i++ {
+		child := args.NamedChild(i)
+		if raw, ok := stringLiteralContent(child, content); ok {
+			return nodeMatch(node, raw, kind), false
+		}
+		break
+	}
+
+	return importMatch{}, kind == "dynamic_import"
 }
 
-func collectMatches(text string, re *regexp.Regexp, kind string) []importMatch {
-	idx := re.FindAllStringSubmatchIndex(text, -1)
-	matches := make([]importMatch, 0, len(idx))
-	for _, m := range idx {
-		if len(m) < 4 {
-			continue
-		}
-		fullStart := m[0]
-		rawStart := m[2]
-		rawEnd := m[3]
-		if rawStart < 0 || rawEnd <= rawStart {
-			continue
-		}
-		matches = append(matches, importMatch{
-			start: fullStart,
-			end:   m[1],
-			raw:   text[rawStart:rawEnd],
-			kind:  kind,
-		})
+func nodeMatch(node *sitter.Node, raw, kind string) importMatch {
+	return importMatch{
+		start:  int(node.StartByte()),
+		line:   int(node.StartPoint().Row) + 1,
+		column: int(node.StartPoint().Column) + 1,
+		raw:    raw,
+		kind:   kind,
 	}
-	return matches
 }
 
-func maskComments(in string) string {
-	out := make([]byte, 0, len(in))
-	inString := false
-	stringQuote := byte(0)
-	escaped := false
-	lineComment := false
-	blockComment := false
-
-	for i := 0; i < len(in); i++ {
-		c := in[i]
-
-		if lineComment {
-			if c == '\n' {
-				lineComment = false
-				out = append(out, c)
-			} else {
-				out = append(out, ' ')
-			}
-			continue
-		}
-		if blockComment {
-			if c == '\n' {
-				out = append(out, c)
-			} else {
-				out = append(out, ' ')
-			}
-			if c == '*' && i+1 < len(in) && in[i+1] == '/' {
-				out = append(out, ' ')
-				blockComment = false
-				i++
-			}
-			continue
-		}
-
-		if inString {
-			out = append(out, c)
-			if escaped {
-				escaped = false
-				continue
-			}
-			if c == '\\' {
-				escaped = true
-				continue
-			}
-			if c == stringQuote {
-				inString = false
-				stringQuote = byte(0)
-			}
-			continue
-		}
-
-		if c == '\'' || c == '"' || c == '`' {
-			inString = true
-			stringQuote = c
-			out = append(out, c)
-			continue
-		}
-		if c == '/' && i+1 < len(in) {
-			next := in[i+1]
-			if next == '/' {
-				lineComment = true
-				out = append(out, ' ', ' ')
-				i++
-				continue
-			}
-			if next == '*' {
-				blockComment = true
-				out = append(out, ' ', ' ')
-				i++
-				continue
-			}
-		}
-		out = append(out, c)
+func stringLiteralContent(node *sitter.Node, content []byte) (string, bool) {
+	if node == nil {
+		return "", false
 	}
-	return string(out)
+	switch node.Type() {
+	case "string", "string_fragment":
+	default:
+		return "", false
+	}
+	raw := strings.TrimSpace(node.Content(content))
+	if len(raw) < 2 {
+		return "", false
+	}
+	quote := raw[0]
+	if (quote != '"' && quote != '\'') || raw[len(raw)-1] != quote {
+		return "", false
+	}
+	return unescapeImportLiteral(raw[1 : len(raw)-1]), true
 }
 
-func hasTokenAt(text string, start int, token string) bool {
-	if start < 0 || start+len(token) > len(text) {
-		return false
-	}
-	return text[start:start+len(token)] == token
+func unescapeImportLiteral(raw string) string {
+	raw = strings.ReplaceAll(raw, `\"`, `"`)
+	raw = strings.ReplaceAll(raw, `\'`, `'`)
+	raw = strings.ReplaceAll(raw, `\\`, `\`)
+	return raw
 }
 
-func isCallTokenBoundary(text string, start, end int) bool {
-	if start > 0 {
-		before := text[start-1]
-		if isIdentChar(before) || before == '.' {
-			return false
+func firstNamedChildOfType(node *sitter.Node, typeName string) *sitter.Node {
+	for i := 0; i < int(node.NamedChildCount()); i++ {
+		child := node.NamedChild(i)
+		if child.Type() == typeName {
+			return child
 		}
 	}
-	if end < len(text) && isIdentChar(text[end]) {
-		return false
-	}
-	return true
-}
-
-func isIdentChar(c byte) bool {
-	return (c >= 'a' && c <= 'z') ||
-		(c >= 'A' && c <= 'Z') ||
-		(c >= '0' && c <= '9') ||
-		c == '_' || c == '$'
-}
-
-func skipWhitespace(text string, start int) int {
-	i := start
-	for i < len(text) {
-		switch text[i] {
-		case ' ', '\t', '\n', '\r':
-			i++
-		default:
-			return i
-		}
-	}
-	return i
-}
-
-func lineCol(content []byte, index int) (int, int) {
-	if index < 0 {
-		return 1, 1
-	}
-	line := 1
-	col := 1
-	for i := 0; i < len(content) && i < index; i++ {
-		if content[i] == '\n' {
-			line++
-			col = 1
-		} else {
-			col++
-		}
-	}
-	return line, col
+	return nil
 }
 
 func tentativePackageImport(raw string) bool {
 	return !strings.HasPrefix(raw, ".") && !strings.HasPrefix(raw, "/")
 }
 
-func itoa(i int) string {
-	if i == 0 {
-		return "0"
+func isJSXLike(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".tsx", ".jsx":
+		return true
+	default:
+		return false
 	}
-	neg := false
-	if i < 0 {
-		neg = true
-		i = -i
-	}
-	buf := [20]byte{}
-	pos := len(buf)
-	for i > 0 {
-		pos--
-		buf[pos] = byte('0' + (i % 10))
-		i /= 10
-	}
-	if neg {
-		pos--
-		buf[pos] = '-'
-	}
-	return string(buf[pos:])
 }

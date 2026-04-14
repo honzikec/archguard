@@ -1,6 +1,4 @@
-package config
-
-const configSchemaV1 = `{
+{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
@@ -92,4 +90,3 @@ const configSchemaV1 = `{
     }
   }
 }
-`

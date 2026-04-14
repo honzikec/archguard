@@ -1,17 +1,21 @@
 package report
 
 import (
+	"bytes"
 	"fmt"
+	"os"
 	"sort"
 
 	"github.com/honzikec/archguard/internal/model"
 )
 
-func PrintText(findings []model.Finding, summary Summary) {
+func PrintText(findings []model.Finding, summary Summary) error {
+	var b bytes.Buffer
 	if len(findings) == 0 {
-		fmt.Println("No architectural violations found.")
-		printSummary(summary)
-		return
+		fmt.Fprintln(&b, "No architectural violations found.")
+		printSummary(&b, summary)
+		_, err := os.Stdout.Write(b.Bytes())
+		return err
 	}
 
 	byRule := map[string][]model.Finding{}
@@ -26,7 +30,7 @@ func PrintText(findings []model.Finding, summary Summary) {
 	sort.Strings(order)
 
 	for _, key := range order {
-		fmt.Printf("%s\n", key)
+		fmt.Fprintf(&b, "%s\n", key)
 		items := byRule[key]
 		sort.Slice(items, func(i, j int) bool {
 			if items[i].FilePath != items[j].FilePath {
@@ -38,32 +42,35 @@ func PrintText(findings []model.Finding, summary Summary) {
 			return items[i].Column < items[j].Column
 		})
 		for _, f := range items {
-			fmt.Printf("  - %s:%d:%d %s", f.FilePath, f.Line, f.Column, f.Message)
+			fmt.Fprintf(&b, "  - %s:%d:%d %s", f.FilePath, f.Line, f.Column, f.Message)
 			if f.RawImport != "" {
-				fmt.Printf(" (import: %s)", f.RawImport)
+				fmt.Fprintf(&b, " (import: %s)", f.RawImport)
 			}
 			if f.Details != "" {
-				fmt.Printf(" [%s]", f.Details)
+				fmt.Fprintf(&b, " [%s]", f.Details)
 			}
-			fmt.Println()
+			fmt.Fprintln(&b)
 		}
 	}
-	printSummary(summary)
+	printSummary(&b, summary)
+	_, err := os.Stdout.Write(b.Bytes())
+	return err
 }
 
-func printSummary(summary Summary) {
-	fmt.Println()
-	fmt.Printf("Summary: files=%d imports=%d findings=%d (error=%d warning=%d) parse_errors=%d files_skipped=%d duration_ms=%d\n",
+func printSummary(b *bytes.Buffer, summary Summary) {
+	fmt.Fprintln(b)
+	fmt.Fprintf(b, "Summary: files=%d imports=%d findings=%d (error=%d warning=%d) suppressed=%d parse_errors=%d files_skipped=%d duration_ms=%d\n",
 		summary.FilesScanned,
 		summary.ImportsScanned,
 		summary.FindingsTotal,
 		summary.FindingsError,
 		summary.FindingsWarning,
+		summary.SuppressedFindings,
 		summary.ParseErrors,
 		summary.FilesSkipped,
 		summary.DurationMS,
 	)
 	if summary.ConfigDir != "" {
-		fmt.Printf("Config: dir=%s roots=%v\n", summary.ConfigDir, summary.EffectiveRoots)
+		fmt.Fprintf(b, "Config: dir=%s roots=%v\n", summary.ConfigDir, summary.EffectiveRoots)
 	}
 }

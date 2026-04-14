@@ -49,6 +49,70 @@ rules:
 	}
 }
 
+func TestCheckBaselineWriteAndSuppress(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteFile(t, filepath.Join(dir, "archguard.yaml"), `version: 1
+project:
+  roots: ["src"]
+  include: ["**/*.ts"]
+  exclude: ["**/node_modules/**"]
+rules:
+  - id: AG-NO-PKG
+    kind: no_package
+    severity: error
+    scope: ["src/domain/**"]
+    target: ["axios"]
+`)
+	mustWriteFile(t, filepath.Join(dir, "src", "domain", "user.ts"), `import axios from "axios"`)
+
+	code, out, errOut := runCmdInDir(t, dir, []string{
+		"check", "--config", "archguard.yaml", "--format", "json", "--write-baseline", "archguard-baseline.json",
+	})
+	if code != 0 {
+		t.Fatalf("expected baseline write exit 0, got %d stderr=%s output=%s", code, errOut, out)
+	}
+	if !strings.Contains(errOut, "baseline written") {
+		t.Fatalf("expected baseline write message, got stderr=%s", errOut)
+	}
+	var payload struct {
+		Findings []struct {
+			RuleID string `json:"rule_id"`
+		} `json:"findings"`
+		Summary struct {
+			SuppressedFindings int `json:"suppressed_findings"`
+		} `json:"summary"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("failed to decode baseline write output: %v", err)
+	}
+	if len(payload.Findings) != 0 || payload.Summary.SuppressedFindings != 1 {
+		t.Fatalf("expected write-baseline to suppress one output finding, got %+v", payload)
+	}
+
+	code, out, errOut = runCmdInDir(t, dir, []string{
+		"check", "--config", "archguard.yaml", "--format", "json", "--baseline", "archguard-baseline.json",
+	})
+	if code != 0 {
+		t.Fatalf("expected baseline-suppressed exit 0, got %d stderr=%s output=%s", code, errOut, out)
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("failed to decode baseline output: %v", err)
+	}
+	if len(payload.Findings) != 0 || payload.Summary.SuppressedFindings != 1 {
+		t.Fatalf("expected baseline to suppress one finding, got %+v", payload)
+	}
+
+	code, out, errOut = runCmdInDir(t, dir, []string{
+		"check", "--config", "archguard.yaml", "--format", "sarif", "--baseline", "archguard-baseline.json",
+	})
+	if code != 0 {
+		t.Fatalf("expected baseline-suppressed SARIF exit 0, got %d stderr=%s output=%s", code, errOut, out)
+	}
+	if strings.Contains(out, "AG-NO-PKG") {
+		t.Fatalf("expected suppressed finding to be absent from SARIF, got: %s", out)
+	}
+}
+
 func TestInvalidConfigReturnsCode2(t *testing.T) {
 	dir := t.TempDir()
 	mustWriteFile(t, filepath.Join(dir, "archguard.yaml"), `version: 1
@@ -75,6 +139,16 @@ func TestCycleFixtureFails(t *testing.T) {
 	}
 	if !strings.Contains(out, "AG-NO-CYCLES") {
 		t.Fatalf("expected cycle rule in output")
+	}
+}
+
+func TestRootBoundaryFixtureFails(t *testing.T) {
+	code, out, errOut := runCmdInDir(t, fixturePath("root_boundary_fail"), []string{"check", "--config", "archguard.yaml", "--format", "json"})
+	if code != 1 {
+		t.Fatalf("expected exit 1, got %d stderr=%s output=%s", code, errOut, out)
+	}
+	if !strings.Contains(out, "AG-NO-INFRA-IN-DOMAIN") {
+		t.Fatalf("expected root boundary rule in output")
 	}
 }
 

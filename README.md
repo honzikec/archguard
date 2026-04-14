@@ -11,6 +11,17 @@ It enforces architectural boundaries (imports, packages, file patterns, and cycl
 - `file_pattern`: enforce filename regex rules in selected paths
 - `no_cycle`: detect subtree dependency cycles
 
+## Install
+
+```bash
+# Pinned Go install, using the release tag you want
+go install github.com/honzikec/archguard/cmd/archguard@vX.Y.Z
+
+# Or download a tagged binary from GitHub Releases
+```
+
+ArchGuard requires Go 1.24+ when building from source.
+
 ## Quickstart (5 minutes)
 
 ```bash
@@ -55,7 +66,7 @@ Mining note:
 version: 1
 project:
   roots: ["."]
-  include: ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs", "**/*.php", "**/*.phtml"]
+  include: ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs", "**/*.php", "**/*.phtml"]
   exclude: ["**/node_modules/**", "**/dist/**", "**/build/**", "**/.next/**", "**/coverage/**", "**/.git/**", "**/vendor/**", "**/runtime/**", "**/storage/**", "**/cache/**", "**/migrations/**"]
   language: auto # auto|javascript|php
   framework: nextjs # optional; generic|nextjs|react|react_router|react_native|angular
@@ -93,7 +104,7 @@ For production gating, run ArchGuard in enforce mode (`--parse-error-policy=erro
 
 ```yaml
 - name: Install ArchGuard
-  run: go install github.com/honzikec/archguard/cmd/archguard@latest
+  run: go install github.com/honzikec/archguard/cmd/archguard@vX.Y.Z
 
 - name: Run ArchGuard
   run: archguard check --config archguard.yaml --format sarif --parse-error-policy error > archguard-results.sarif
@@ -105,6 +116,11 @@ For production gating, run ArchGuard in enforce mode (`--parse-error-policy=erro
     sarif_file: archguard-results.sarif
     category: archguard
 ```
+
+Brownfield adoption:
+- `archguard check --write-baseline archguard-baseline.json` records current findings without failing the run
+- `archguard check --baseline archguard-baseline.json` suppresses only findings already present in that baseline
+- JSON/text summaries include `suppressed_findings`; suppressed findings are omitted from SARIF
 
 ## Docs
 

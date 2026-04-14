@@ -87,3 +87,59 @@ const d = require("./real")
 		t.Fatalf("unexpected import extracted: %+v", imports[0])
 	}
 }
+
+func TestExtractImportsSupportsMultilineTSXAndImportAttributes(t *testing.T) {
+	source := []byte(`
+import {
+  Button,
+  type ButtonProps,
+} from "./button"
+export {
+  Button,
+} from "./public"
+export * from "./all"
+import data from "./data.json" with { type: "json" }
+const lazy = import(
+  "./lazy"
+)
+`)
+	imports, diagnostics, err := parser.ExtractImportsWithDiagnostics("src/file.tsx", source)
+	if err != nil {
+		t.Fatalf("expected parse to succeed: %v", err)
+	}
+	if diagnostics.NonLiteralDynamicImports != 0 {
+		t.Fatalf("expected no ignored dynamic imports, got %+v", diagnostics)
+	}
+	got := make([]string, 0, len(imports))
+	for _, imp := range imports {
+		got = append(got, imp.Kind+":"+imp.RawImport)
+	}
+	want := []string{
+		"import:./button",
+		"export_from:./public",
+		"export_from:./all",
+		"import:./data.json",
+		"dynamic_import:./lazy",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected imports, want=%v got=%v", want, got)
+	}
+}
+
+func TestExtractImportsReportsNonLiteralDynamicImports(t *testing.T) {
+	source := []byte(`
+const path = "./lazy"
+const lazy = import(path)
+const ok = import("./ok")
+`)
+	imports, diagnostics, err := parser.ExtractImportsWithDiagnostics("src/file.ts", source)
+	if err != nil {
+		t.Fatalf("expected parse to succeed: %v", err)
+	}
+	if diagnostics.NonLiteralDynamicImports != 1 {
+		t.Fatalf("expected one ignored dynamic import, got %+v", diagnostics)
+	}
+	if len(imports) != 1 || imports[0].RawImport != "./ok" || imports[0].Kind != "dynamic_import" {
+		t.Fatalf("unexpected imports: %+v", imports)
+	}
+}

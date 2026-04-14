@@ -8,9 +8,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/honzikec/archguard/internal/analysis"
 	"github.com/honzikec/archguard/internal/catalog"
 	"github.com/honzikec/archguard/internal/config"
-	"github.com/honzikec/archguard/internal/fileset"
 	"github.com/honzikec/archguard/internal/framework"
 	"github.com/honzikec/archguard/internal/graph"
 	"github.com/honzikec/archguard/internal/language"
@@ -102,35 +102,13 @@ func runMine(args []string) int {
 			fmt.Fprintf(os.Stderr, "effective roots: %s\n", strings.Join(effectiveRoots, ", "))
 		}
 
-		files, err := fileset.DiscoverWithAdapter(cfg.Project, languageResolution.Adapter)
+		analysisResult, err := analysis.Run(cfg.Project, languageResolution.Adapter, analysis.Options{})
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to discover files: %v\n", err)
+			fmt.Fprintf(os.Stderr, "%v\n", err)
 			return 2
 		}
-		resolver, err := pathutil.NewResolver(".", cfg.Project)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to initialize resolver: %v\n", err)
-			return 2
-		}
-
-		imports := make([]model.ImportRef, 0)
-		parseErrors := 0
-		for _, file := range files {
-			parsed, err := languageResolution.Adapter.ParseFile(file)
-			if err != nil {
-				parseErrors++
-				if common.debug {
-					fmt.Fprintf(os.Stderr, "parse/read error %s: %v\n", file, err)
-				}
-				continue
-			}
-			for i := range parsed {
-				resolved, isPackage := resolver.Resolve(parsed[i].SourceFile, parsed[i].RawImport)
-				parsed[i].ResolvedPath = resolved
-				parsed[i].IsPackageImport = isPackage
-			}
-			imports = append(imports, parsed...)
-		}
+		files := analysisResult.Files
+		imports := analysisResult.Imports
 
 		workspaceRoots := append([]string{}, cfg.Project.Roots...)
 		workspaceReason := "off"
@@ -233,8 +211,11 @@ func runMine(args []string) int {
 				metadata.Normalization.OriginalFiles,
 				metadata.Normalization.NormalizedFiles,
 			)
-			if parseErrors > 0 {
-				fmt.Fprintf(os.Stderr, "mine parse/read errors: %d file(s) skipped\n", parseErrors)
+			if analysisResult.Diagnostics.ParseErrors > 0 {
+				fmt.Fprintf(os.Stderr, "mine parse/read errors: %d file(s) skipped\n", analysisResult.Diagnostics.ParseErrors)
+			}
+			if analysisResult.Diagnostics.NonLiteralDynamicImports > 0 {
+				fmt.Fprintf(os.Stderr, "mine ignored non-literal dynamic imports: %d\n", analysisResult.Diagnostics.NonLiteralDynamicImports)
 			}
 			if debugStats != nil && len(debugStats.Dropped) > 0 {
 				keys := make([]string, 0, len(debugStats.Dropped))

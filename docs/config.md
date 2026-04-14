@@ -4,6 +4,8 @@
 
 All relative project paths (`project.roots`, `project.tsconfig`, alias targets) are resolved from the directory that contains the config file passed via `--config`.
 
+JSON schema for editor validation is published at `schemas/archguard.v1.schema.json`. Config files may include an optional top-level `$schema` field.
+
 For greenfield setup from natural-language intent, use architecture brief compilation:
 - `archguard init --from-brief architecture-brief.yaml --out archguard.yaml`
 - brief format and examples: `docs/brief.md`
@@ -11,10 +13,11 @@ For greenfield setup from natural-language intent, use architecture brief compil
 ## Schema
 
 ```yaml
+$schema: "./schemas/archguard.v1.schema.json" # optional
 version: 1
 project:
   roots: ["."]
-  include: ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs", "**/*.php", "**/*.phtml"]
+  include: ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs", "**/*.php", "**/*.phtml"]
   exclude: ["**/node_modules/**", "**/dist/**", "**/build/**", "**/.next/**", "**/coverage/**", "**/.git/**", "**/vendor/**", "**/runtime/**", "**/storage/**", "**/cache/**", "**/migrations/**"]
   language: auto|javascript|php # optional; defaults to auto
   framework: generic|nextjs|react|react_router|react_native|angular # optional; affects mining normalization only

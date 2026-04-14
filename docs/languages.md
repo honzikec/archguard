@@ -5,8 +5,9 @@ ArchGuard now routes file discovery and import parsing through a language adapte
 ## Current adapters
 
 - `javascript`
-  - supported files: `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`
-  - import extraction: deterministic static parsing via existing parser
+  - supported files: `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.cjs`
+  - import extraction: deterministic Tree-sitter AST extraction for static imports/re-exports, import attributes, literal `require`, and literal dynamic `import`
+  - path resolution: relative imports, `tsconfig.json`/`jsconfig.json` `baseUrl`, local `extends`, and `paths` aliases
 - `php`
   - supported files: `.php`, `.phtml`
   - import extraction: deterministic Tree-sitter AST extraction of `use` declarations and static `require/include` string literals
@@ -39,3 +40,9 @@ ArchGuard now routes file discovery and import parsing through a language adapte
 - PSR-4 resolution currently maps class-like namespace imports to file paths only (no symbol/type validation)
 - Composer `autoload.classmap`, `autoload.files`, and non-PSR include conventions are not resolved
 - dynamic include expressions are ignored unless the path is a string literal
+
+## Current JavaScript/TypeScript limitations
+
+- non-literal dynamic imports are ignored and counted in debug output
+- package-based `tsconfig extends` values are ignored so projects remain usable without `node_modules`
+- full Node/bundler resolution is intentionally out of scope; unresolved bare imports remain package imports

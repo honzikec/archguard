@@ -8,22 +8,42 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/tailscale/hujson"
+
 	"github.com/honzikec/archguard/internal/config"
 )
 
 type Resolver struct {
 	root       string
-	baseURL    string
-	aliases    map[string][]string
+	baseURLs   []string
+	aliases    map[string][]aliasTarget
 	aliasOrder []string
 	extensions []string
+	probeCache map[string]probeResult
+}
+
+type aliasTarget struct {
+	Pattern string
+	BaseDir string
+}
+
+type probeResult struct {
+	path string
+	ok   bool
 }
 
 type tsConfigFile struct {
+	Extends         json.RawMessage `json:"extends"`
 	CompilerOptions struct {
 		BaseURL string              `json:"baseUrl"`
 		Paths   map[string][]string `json:"paths"`
 	} `json:"compilerOptions"`
+}
+
+type resolvedTSConfig struct {
+	BaseURL    string
+	UseBaseURL bool
+	Paths      map[string][]aliasTarget
 }
 
 type composerFile struct {
@@ -43,8 +63,9 @@ func NewResolver(root string, project config.ProjectSettings) (*Resolver, error)
 
 	r := &Resolver{
 		root:       absRoot,
-		aliases:    map[string][]string{},
-		extensions: []string{".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".php"},
+		aliases:    map[string][]aliasTarget{},
+		extensions: []string{".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".php"},
+		probeCache: map[string]probeResult{},
 	}
 
 	tsconfigPath, err := detectTSConfig(absRoot, project.Tsconfig)
@@ -61,7 +82,13 @@ func NewResolver(root string, project config.ProjectSettings) (*Resolver, error)
 	}
 
 	for alias, targets := range project.Aliases {
-		r.aliases[Normalize(alias)] = append(r.aliases[Normalize(alias)], targets...)
+		normalizedAlias := Normalize(alias)
+		for _, target := range targets {
+			r.aliases[normalizedAlias] = append(r.aliases[normalizedAlias], aliasTarget{
+				Pattern: Normalize(target),
+				BaseDir: r.root,
+			})
+		}
 	}
 	r.aliasOrder = make([]string, 0, len(r.aliases))
 	for alias := range r.aliases {
@@ -96,29 +123,132 @@ func detectTSConfig(root, explicit string) (string, error) {
 }
 
 func (r *Resolver) loadTSConfig(path string) error {
-	data, err := os.ReadFile(path)
+	resolved, err := readTSConfigChain(path, map[string]struct{}{})
 	if err != nil {
-		return fmt.Errorf("failed to read %s: %w", path, err)
+		return err
 	}
-	var cfg tsConfigFile
-	if err := unmarshalJSONC(data, &cfg); err != nil {
-		return fmt.Errorf("failed to parse %s: %w", path, err)
+	if resolved.UseBaseURL && resolved.BaseURL != "" {
+		r.baseURLs = append(r.baseURLs, resolved.BaseURL)
 	}
-
-	base := cfg.CompilerOptions.BaseURL
-	if base == "" {
-		base = "."
-	}
-	if !filepath.IsAbs(base) {
-		base = filepath.Join(filepath.Dir(path), base)
-	}
-	r.baseURL = Normalize(base)
-
-	for alias, targets := range cfg.CompilerOptions.Paths {
+	for alias, targets := range resolved.Paths {
 		normalizedAlias := Normalize(alias)
 		r.aliases[normalizedAlias] = append(r.aliases[normalizedAlias], targets...)
 	}
 	return nil
+}
+
+func readTSConfigChain(path string, seen map[string]struct{}) (resolvedTSConfig, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return resolvedTSConfig{}, err
+	}
+	if _, ok := seen[absPath]; ok {
+		return resolvedTSConfig{}, fmt.Errorf("tsconfig extends cycle detected at %s", absPath)
+	}
+	seen[absPath] = struct{}{}
+	defer delete(seen, absPath)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return resolvedTSConfig{}, fmt.Errorf("failed to read %s: %w", path, err)
+	}
+	var cfg tsConfigFile
+	if err := unmarshalJSONC(data, &cfg); err != nil {
+		return resolvedTSConfig{}, fmt.Errorf("failed to parse %s: %w", path, err)
+	}
+
+	resolved := resolvedTSConfig{Paths: map[string][]aliasTarget{}}
+	for _, spec := range tsConfigExtends(cfg.Extends) {
+		parentPath, ok, err := resolveTSConfigExtends(filepath.Dir(absPath), spec)
+		if err != nil {
+			return resolvedTSConfig{}, err
+		}
+		if !ok {
+			continue
+		}
+		parent, err := readTSConfigChain(parentPath, seen)
+		if err != nil {
+			return resolvedTSConfig{}, err
+		}
+		resolved.BaseURL = parent.BaseURL
+		resolved.UseBaseURL = parent.UseBaseURL
+		for alias, targets := range parent.Paths {
+			resolved.Paths[alias] = append([]aliasTarget{}, targets...)
+		}
+	}
+
+	base := cfg.CompilerOptions.BaseURL
+	if base != "" {
+		if !filepath.IsAbs(base) {
+			base = filepath.Join(filepath.Dir(absPath), base)
+		}
+		resolved.BaseURL = filepath.Clean(base)
+		resolved.UseBaseURL = true
+	}
+	if resolved.BaseURL == "" {
+		resolved.BaseURL = filepath.Dir(absPath)
+	}
+
+	for alias, targets := range cfg.CompilerOptions.Paths {
+		normalizedAlias := Normalize(alias)
+		resolved.Paths[normalizedAlias] = nil
+		for _, target := range targets {
+			resolved.Paths[normalizedAlias] = append(resolved.Paths[normalizedAlias], aliasTarget{
+				Pattern: Normalize(target),
+				BaseDir: resolved.BaseURL,
+			})
+		}
+	}
+	return resolved, nil
+}
+
+func tsConfigExtends(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var single string
+	if err := json.Unmarshal(raw, &single); err == nil && strings.TrimSpace(single) != "" {
+		return []string{strings.TrimSpace(single)}
+	}
+	var many []string
+	if err := json.Unmarshal(raw, &many); err == nil {
+		out := make([]string, 0, len(many))
+		for _, item := range many {
+			item = strings.TrimSpace(item)
+			if item != "" {
+				out = append(out, item)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+func resolveTSConfigExtends(baseDir, spec string) (string, bool, error) {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return "", false, nil
+	}
+	if !filepath.IsAbs(spec) && !strings.HasPrefix(spec, ".") {
+		// Package-based extends are intentionally ignored by the lightweight
+		// resolver; local repository config remains usable without node_modules.
+		return "", false, nil
+	}
+	base := spec
+	if !filepath.IsAbs(base) {
+		base = filepath.Join(baseDir, spec)
+	}
+	candidates := []string{base}
+	if !strings.HasSuffix(strings.ToLower(base), ".json") {
+		candidates = append(candidates, base+".json")
+	}
+	candidates = append(candidates, filepath.Join(base, "tsconfig.json"))
+	for _, candidate := range candidates {
+		if fi, err := os.Stat(candidate); err == nil && !fi.IsDir() {
+			return filepath.Clean(candidate), true, nil
+		}
+	}
+	return "", false, nil
 }
 
 func (r *Resolver) loadComposerMappings(project config.ProjectSettings) error {
@@ -210,10 +340,10 @@ func (r *Resolver) addComposerPSR4(composerPath, namespace string, rawTargets an
 			normalized = ""
 		}
 		if normalized == "" {
-			r.aliases[alias] = append(r.aliases[alias], "*")
+			r.aliases[alias] = append(r.aliases[alias], aliasTarget{Pattern: "*", BaseDir: r.root})
 			continue
 		}
-		r.aliases[alias] = append(r.aliases[alias], normalized+"/*")
+		r.aliases[alias] = append(r.aliases[alias], aliasTarget{Pattern: normalized + "/*", BaseDir: r.root})
 	}
 	return nil
 }
@@ -242,128 +372,11 @@ func unmarshalJSONC(data []byte, v any) error {
 	if len(data) >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF {
 		data = data[3:]
 	}
-	clean := stripJSONComments(data)
-	clean = stripJSONTrailingCommas(clean)
+	clean, err := hujson.Standardize(data)
+	if err != nil {
+		return err
+	}
 	return json.Unmarshal(clean, v)
-}
-
-func stripJSONComments(in []byte) []byte {
-	out := make([]byte, 0, len(in))
-	inString := false
-	escaped := false
-	lineComment := false
-	blockComment := false
-
-	for i := 0; i < len(in); i++ {
-		c := in[i]
-
-		if lineComment {
-			if c == '\n' {
-				lineComment = false
-				out = append(out, c)
-			}
-			continue
-		}
-		if blockComment {
-			if c == '\n' {
-				out = append(out, c)
-			}
-			if c == '*' && i+1 < len(in) && in[i+1] == '/' {
-				blockComment = false
-				i++
-			}
-			continue
-		}
-
-		if inString {
-			out = append(out, c)
-			if escaped {
-				escaped = false
-				continue
-			}
-			if c == '\\' {
-				escaped = true
-				continue
-			}
-			if c == '"' {
-				inString = false
-			}
-			continue
-		}
-
-		if c == '"' {
-			inString = true
-			out = append(out, c)
-			continue
-		}
-
-		if c == '/' && i+1 < len(in) {
-			next := in[i+1]
-			if next == '/' {
-				lineComment = true
-				i++
-				continue
-			}
-			if next == '*' {
-				blockComment = true
-				i++
-				continue
-			}
-		}
-
-		out = append(out, c)
-	}
-
-	return out
-}
-
-func stripJSONTrailingCommas(in []byte) []byte {
-	out := make([]byte, 0, len(in))
-	inString := false
-	escaped := false
-
-	for i := 0; i < len(in); i++ {
-		c := in[i]
-		if inString {
-			out = append(out, c)
-			if escaped {
-				escaped = false
-				continue
-			}
-			if c == '\\' {
-				escaped = true
-				continue
-			}
-			if c == '"' {
-				inString = false
-			}
-			continue
-		}
-
-		if c == '"' {
-			inString = true
-			out = append(out, c)
-			continue
-		}
-
-		if c == ',' {
-			j := i + 1
-			for j < len(in) {
-				if in[j] == ' ' || in[j] == '\n' || in[j] == '\r' || in[j] == '\t' {
-					j++
-					continue
-				}
-				break
-			}
-			if j < len(in) && (in[j] == '}' || in[j] == ']') {
-				continue
-			}
-		}
-
-		out = append(out, c)
-	}
-
-	return out
 }
 
 func (r *Resolver) Resolve(sourceFile, rawImport string) (string, bool) {
@@ -389,6 +402,12 @@ func (r *Resolver) Resolve(sourceFile, rawImport string) (string, bool) {
 	for _, alias := range r.aliasOrder {
 		targets := r.aliases[alias]
 		if resolved, ok := r.resolveAlias(alias, targets, rawImport); ok {
+			return resolved, false
+		}
+	}
+
+	for _, baseURL := range r.baseURLs {
+		if resolved, ok := r.probeLocal(filepath.Join(baseURL, rawImport)); ok {
 			return resolved, false
 		}
 	}
@@ -505,7 +524,7 @@ func (r *Resolver) resolvePHPIncludePath(sourceFile, rawImport string) (string, 
 	return "", false
 }
 
-func (r *Resolver) resolveAlias(alias string, targets []string, rawImport string) (string, bool) {
+func (r *Resolver) resolveAlias(alias string, targets []aliasTarget, rawImport string) (string, bool) {
 	alias = Normalize(alias)
 	rawImport = Normalize(rawImport)
 	rawImport = strings.TrimPrefix(rawImport, "/")
@@ -541,26 +560,29 @@ func (r *Resolver) resolveAlias(alias string, targets []string, rawImport string
 	return "", false
 }
 
-func (r *Resolver) aliasTargetBase(target, middle string) string {
-	target = Normalize(target)
-	if strings.Contains(target, "*") {
-		target = strings.ReplaceAll(target, "*", middle)
+func (r *Resolver) aliasTargetBase(target aliasTarget, middle string) string {
+	pattern := Normalize(target.Pattern)
+	if strings.Contains(pattern, "*") {
+		pattern = strings.ReplaceAll(pattern, "*", middle)
 	} else if middle != "" {
-		target = filepath.Join(target, middle)
+		pattern = filepath.Join(pattern, middle)
 	}
 
-	baseRoot := r.root
-	if r.baseURL != "" {
-		baseRoot = r.baseURL
+	baseRoot := target.BaseDir
+	if baseRoot == "" {
+		baseRoot = r.root
 	}
-	if filepath.IsAbs(target) {
-		return target
+	if filepath.IsAbs(pattern) {
+		return pattern
 	}
-	return filepath.Join(baseRoot, target)
+	return filepath.Join(baseRoot, pattern)
 }
 
 func (r *Resolver) probeLocal(base string) (string, bool) {
 	base = filepath.Clean(base)
+	if cached, ok := r.probeCache[base]; ok {
+		return cached.path, cached.ok
+	}
 	candidates := []string{base}
 
 	ext := filepath.Ext(base)
@@ -577,11 +599,16 @@ func (r *Resolver) probeLocal(base string) (string, bool) {
 		if fi, err := os.Stat(candidate); err == nil && !fi.IsDir() {
 			rel, err := filepath.Rel(r.root, candidate)
 			if err != nil {
-				return Normalize(candidate), true
+				resolved := Normalize(candidate)
+				r.probeCache[base] = probeResult{path: resolved, ok: true}
+				return resolved, true
 			}
-			return Normalize(rel), true
+			resolved := Normalize(rel)
+			r.probeCache[base] = probeResult{path: resolved, ok: true}
+			return resolved, true
 		}
 	}
+	r.probeCache[base] = probeResult{}
 	return "", false
 }
 

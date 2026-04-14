@@ -28,3 +28,17 @@ jobs:
 
       - name: Test
         run: go test -v ./...
+
+      - name: GoReleaser config check
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: check .goreleaser.yml .goreleaser.darwin.yml .goreleaser.windows.yml
+
+      - name: GoReleaser snapshot build
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --snapshot --clean --skip=publish -f .goreleaser.yml

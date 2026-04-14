@@ -10,6 +10,13 @@ Required workflow permissions:
 - `contents: read`
 - `security-events: write`
 
+Install ArchGuard from a pinned tag before running the snippets below:
+
+```yaml
+- name: Install ArchGuard
+  run: go install github.com/honzikec/archguard/cmd/archguard@vX.Y.Z
+```
+
 ## Enforce mode (recommended)
 
 ```yaml

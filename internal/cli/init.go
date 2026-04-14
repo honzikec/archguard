@@ -318,13 +318,16 @@ func TestSupportsFileDeterministic(t *testing.T) {
 }
 
 func defaultConfigTemplate() string {
-	return `version: 1
+	return `$schema: "./schemas/archguard.v1.schema.json"
+version: 1
 project:
   roots:
     - "."
   include:
     - "**/*.ts"
     - "**/*.tsx"
+    - "**/*.mts"
+    - "**/*.cts"
     - "**/*.js"
     - "**/*.jsx"
     - "**/*.mjs"
