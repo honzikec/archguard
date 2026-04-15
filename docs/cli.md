@@ -35,6 +35,11 @@ Baselines:
 - `--baseline archguard-baseline.json` suppresses only matching fingerprints
 - suppressed findings are omitted from SARIF and counted as `suppressed_findings` in text/JSON summaries
 
+Resolver diagnostics:
+- summaries may include `workspace_package_imports`, `unresolved_local_imports`, and `ignored_resolution_cases`
+- `--debug` prints the same resolver counters when they are nonzero
+- workspace package imports are local npm/pnpm/yarn packages resolved from manifests already present on disk
+
 ## `archguard mine`
 
 Flags:
@@ -67,6 +72,7 @@ Output notes:
 - in `auto`, mine discovers monorepo workspaces from `package.json workspaces`, `pnpm-workspace.yaml`, and `nx/turbo` conventions and mines each workspace independently before merging
 - mine resolves a framework profile (`generic|nextjs|react|react_router|react_native|angular`) and applies normalization only to mining inputs
 - check/mine resolve language adapter (`auto|javascript|php`) before discovery/parsing
+- `--debug` reports resolver counters for workspace package imports and unresolved local-like imports when present
 - With `--emit-config --adopt-catalog`, adopted catalog rules are appended to emitted config
 - `--interactive` supports selecting mined rules (`a`/`n`/index list), optional severity override, and confirmation before writing config
 - emitted `no_cycle` rules default to `warning` unless overridden via `--emit-no-cycle-severity=error`

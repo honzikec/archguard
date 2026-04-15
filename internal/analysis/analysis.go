@@ -21,6 +21,9 @@ type Diagnostics struct {
 	ParseErrors              int
 	FilesSkipped             int
 	NonLiteralDynamicImports int
+	WorkspacePackageImports  int
+	UnresolvedLocalImports   int
+	IgnoredResolutionCases   int
 }
 
 type Result struct {
@@ -79,6 +82,10 @@ func Run(project config.ProjectSettings, adapter contracts.Adapter, opts Options
 		}
 		allImports = append(allImports, parsed...)
 	}
+	resolveDiagnostics := resolver.Diagnostics()
+	diagnostics.WorkspacePackageImports = resolveDiagnostics.WorkspacePackageImports
+	diagnostics.UnresolvedLocalImports = resolveDiagnostics.UnresolvedLocalImports
+	diagnostics.IgnoredResolutionCases = resolveDiagnostics.IgnoredResolutionCases
 
 	return Result{
 		Files:       files,

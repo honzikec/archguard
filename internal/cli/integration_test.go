@@ -113,6 +113,98 @@ rules:
 	}
 }
 
+func TestCheckWorkspacePackageResolutionSummaryAndBaseline(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteFile(t, filepath.Join(dir, "package.json"), `{"workspaces":["apps/*","packages/*"]}`)
+	mustWriteFile(t, filepath.Join(dir, "archguard.yaml"), `version: 1
+project:
+  roots: ["apps/web", "packages/ui"]
+  include: ["**/*.ts"]
+  exclude: ["**/node_modules/**"]
+rules:
+  - id: AG-NO-WEB-UI
+    kind: no_import
+    severity: error
+    scope: ["apps/web/**"]
+    target: ["packages/ui/src/**"]
+`)
+	mustWriteFile(t, filepath.Join(dir, "apps", "web", "src", "page.ts"), `import { Button } from "@acme/ui/button"
+import missing from "@acme/ui/missing"
+export const page = Button || missing
+`)
+	mustWriteFile(t, filepath.Join(dir, "packages", "ui", "package.json"), `{
+  "name": "@acme/ui",
+  "exports": {
+    "./button": "./src/button.ts",
+    "./missing": "react"
+  }
+}`)
+	mustWriteFile(t, filepath.Join(dir, "packages", "ui", "src", "button.ts"), `export const Button = 1`)
+
+	code, out, errOut := runCmdInDir(t, dir, []string{
+		"check", "--config", "archguard.yaml", "--format", "json",
+	})
+	if code != 1 {
+		t.Fatalf("expected workspace package violation, got code %d stderr=%s output=%s", code, errOut, out)
+	}
+	var payload struct {
+		Findings []struct {
+			RuleID string `json:"rule_id"`
+		} `json:"findings"`
+		Summary struct {
+			WorkspacePackageImports int `json:"workspace_package_imports"`
+			UnresolvedLocalImports  int `json:"unresolved_local_imports"`
+			IgnoredResolutionCases  int `json:"ignored_resolution_cases"`
+			SuppressedFindings      int `json:"suppressed_findings"`
+		} `json:"summary"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("failed to decode workspace output: %v", err)
+	}
+	if len(payload.Findings) != 1 || payload.Findings[0].RuleID != "AG-NO-WEB-UI" {
+		t.Fatalf("expected AG-NO-WEB-UI finding, got %+v", payload.Findings)
+	}
+	if payload.Summary.WorkspacePackageImports != 1 || payload.Summary.UnresolvedLocalImports != 1 || payload.Summary.IgnoredResolutionCases != 1 {
+		t.Fatalf("unexpected resolver summary: %+v", payload.Summary)
+	}
+
+	code, _, errOut = runCmdInDir(t, dir, []string{
+		"mine", "--config", "archguard.yaml", "--format", "json", "--catalog", "off", "--debug", "--min-support", "1", "--max-prevalence", "1",
+	})
+	if code != 0 {
+		t.Fatalf("expected mine to succeed, got code %d stderr=%s", code, errOut)
+	}
+	if !strings.Contains(errOut, "mine workspace package imports resolved: 1") {
+		t.Fatalf("expected mine debug resolver diagnostics, got: %s", errOut)
+	}
+
+	code, out, errOut = runCmdInDir(t, dir, []string{
+		"check", "--config", "archguard.yaml", "--format", "json", "--write-baseline", "archguard-baseline.json",
+	})
+	if code != 0 {
+		t.Fatalf("expected workspace baseline write exit 0, got %d stderr=%s output=%s", code, errOut, out)
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("failed to decode workspace baseline write output: %v", err)
+	}
+	if len(payload.Findings) != 0 || payload.Summary.SuppressedFindings != 1 || payload.Summary.WorkspacePackageImports != 1 {
+		t.Fatalf("expected baseline write to suppress workspace finding, got %+v", payload)
+	}
+
+	code, out, errOut = runCmdInDir(t, dir, []string{
+		"check", "--config", "archguard.yaml", "--format", "json", "--baseline", "archguard-baseline.json",
+	})
+	if code != 0 {
+		t.Fatalf("expected workspace baseline-suppressed exit 0, got %d stderr=%s output=%s", code, errOut, out)
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("failed to decode workspace baseline output: %v", err)
+	}
+	if len(payload.Findings) != 0 || payload.Summary.SuppressedFindings != 1 || payload.Summary.WorkspacePackageImports != 1 {
+		t.Fatalf("expected baseline to suppress workspace finding, got %+v", payload)
+	}
+}
+
 func TestInvalidConfigReturnsCode2(t *testing.T) {
 	dir := t.TempDir()
 	mustWriteFile(t, filepath.Join(dir, "archguard.yaml"), `version: 1

@@ -14,12 +14,21 @@ import (
 )
 
 type Resolver struct {
-	root       string
-	baseURLs   []string
-	aliases    map[string][]aliasTarget
-	aliasOrder []string
-	extensions []string
-	probeCache map[string]probeResult
+	root           string
+	baseURLs       []string
+	aliases        map[string][]aliasTarget
+	aliasOrder     []string
+	extensions     []string
+	probeCache     map[string]probeResult
+	jsPackages     map[string]jsPackage
+	jsPackageRoots []jsPackage
+	diagnostics    ResolveDiagnostics
+}
+
+type ResolveDiagnostics struct {
+	WorkspacePackageImports int
+	UnresolvedLocalImports  int
+	IgnoredResolutionCases  int
 }
 
 type aliasTarget struct {
@@ -62,10 +71,16 @@ func NewResolver(root string, project config.ProjectSettings) (*Resolver, error)
 	}
 
 	r := &Resolver{
-		root:       absRoot,
-		aliases:    map[string][]aliasTarget{},
-		extensions: []string{".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".php"},
-		probeCache: map[string]probeResult{},
+		root:           absRoot,
+		aliases:        map[string][]aliasTarget{},
+		extensions:     []string{".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".php"},
+		probeCache:     map[string]probeResult{},
+		jsPackages:     map[string]jsPackage{},
+		jsPackageRoots: []jsPackage{},
+	}
+
+	if err := r.loadJSPackageMappings(project); err != nil {
+		return nil, err
 	}
 
 	tsconfigPath, err := detectTSConfig(absRoot, project.Tsconfig)
@@ -102,6 +117,10 @@ func NewResolver(root string, project config.ProjectSettings) (*Resolver, error)
 	return r, nil
 }
 
+func (r *Resolver) Diagnostics() ResolveDiagnostics {
+	return r.diagnostics
+}
+
 func detectTSConfig(root, explicit string) (string, error) {
 	if explicit != "" {
 		p := explicit
@@ -123,7 +142,7 @@ func detectTSConfig(root, explicit string) (string, error) {
 }
 
 func (r *Resolver) loadTSConfig(path string) error {
-	resolved, err := readTSConfigChain(path, map[string]struct{}{})
+	resolved, err := r.readTSConfigChain(path, map[string]struct{}{})
 	if err != nil {
 		return err
 	}
@@ -137,7 +156,7 @@ func (r *Resolver) loadTSConfig(path string) error {
 	return nil
 }
 
-func readTSConfigChain(path string, seen map[string]struct{}) (resolvedTSConfig, error) {
+func (r *Resolver) readTSConfigChain(path string, seen map[string]struct{}) (resolvedTSConfig, error) {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return resolvedTSConfig{}, err
@@ -159,14 +178,14 @@ func readTSConfigChain(path string, seen map[string]struct{}) (resolvedTSConfig,
 
 	resolved := resolvedTSConfig{Paths: map[string][]aliasTarget{}}
 	for _, spec := range tsConfigExtends(cfg.Extends) {
-		parentPath, ok, err := resolveTSConfigExtends(filepath.Dir(absPath), spec)
+		parentPath, ok, err := r.resolveTSConfigExtends(filepath.Dir(absPath), spec)
 		if err != nil {
 			return resolvedTSConfig{}, err
 		}
 		if !ok {
 			continue
 		}
-		parent, err := readTSConfigChain(parentPath, seen)
+		parent, err := r.readTSConfigChain(parentPath, seen)
 		if err != nil {
 			return resolvedTSConfig{}, err
 		}
@@ -224,16 +243,38 @@ func tsConfigExtends(raw json.RawMessage) []string {
 	return nil
 }
 
-func resolveTSConfigExtends(baseDir, spec string) (string, bool, error) {
+func (r *Resolver) resolveTSConfigExtends(baseDir, spec string) (string, bool, error) {
 	spec = strings.TrimSpace(spec)
 	if spec == "" {
 		return "", false, nil
 	}
-	if !filepath.IsAbs(spec) && !strings.HasPrefix(spec, ".") {
-		// Package-based extends are intentionally ignored by the lightweight
-		// resolver; local repository config remains usable without node_modules.
+	if filepath.IsAbs(spec) || strings.HasPrefix(spec, ".") {
+		resolved := resolveLocalTSConfigExtends(baseDir, spec)
+		return resolved, resolved != "", nil
+	}
+
+	packageName, subpath, ok := parseJSPackageSpecifier(spec)
+	if !ok {
 		return "", false, nil
 	}
+	packageDirs := r.tsConfigPackageDirs(baseDir, packageName)
+	for _, packageDir := range packageDirs {
+		packageTSConfig := ""
+		if pkg, ok := r.jsPackages[packageName]; ok && sameCleanPath(pkg.Dir, packageDir) {
+			packageTSConfig = pkg.TSConfig
+		} else {
+			packageTSConfig = readPackageTSConfigField(packageDir)
+		}
+		for _, candidate := range tsConfigExtendsCandidates(packageDir, subpath, packageTSConfig) {
+			if fi, err := os.Stat(candidate); err == nil && !fi.IsDir() {
+				return filepath.Clean(candidate), true, nil
+			}
+		}
+	}
+	return "", false, nil
+}
+
+func resolveLocalTSConfigExtends(baseDir, spec string) string {
 	base := spec
 	if !filepath.IsAbs(base) {
 		base = filepath.Join(baseDir, spec)
@@ -245,10 +286,10 @@ func resolveTSConfigExtends(baseDir, spec string) (string, bool, error) {
 	candidates = append(candidates, filepath.Join(base, "tsconfig.json"))
 	for _, candidate := range candidates {
 		if fi, err := os.Stat(candidate); err == nil && !fi.IsDir() {
-			return filepath.Clean(candidate), true, nil
+			return filepath.Clean(candidate)
 		}
 	}
-	return "", false, nil
+	return ""
 }
 
 func (r *Resolver) loadComposerMappings(project config.ProjectSettings) error {
@@ -388,6 +429,7 @@ func (r *Resolver) Resolve(sourceFile, rawImport string) (string, bool) {
 		if resolved, ok := r.probeLocal(base); ok {
 			return resolved, false
 		}
+		r.diagnostics.UnresolvedLocalImports++
 		return "", false
 	}
 
@@ -396,19 +438,36 @@ func (r *Resolver) Resolve(sourceFile, rawImport string) (string, bool) {
 		if resolved, ok := r.probeLocal(base); ok {
 			return resolved, false
 		}
+		r.diagnostics.UnresolvedLocalImports++
 		return "", false
 	}
 
+	matchedAlias := false
 	for _, alias := range r.aliasOrder {
 		targets := r.aliases[alias]
-		if resolved, ok := r.resolveAlias(alias, targets, rawImport); ok {
+		if resolved, matched, ok := r.resolveAlias(alias, targets, rawImport); ok {
 			return resolved, false
+		} else if matched {
+			matchedAlias = true
 		}
+	}
+	if matchedAlias {
+		r.diagnostics.UnresolvedLocalImports++
+		return "", false
 	}
 
 	for _, baseURL := range r.baseURLs {
 		if resolved, ok := r.probeLocal(filepath.Join(baseURL, rawImport)); ok {
 			return resolved, false
+		}
+	}
+
+	if !isPHPSourceFile(sourceFile) {
+		if resolved, handled, ok := r.resolveJSPackageImport(sourceFile, rawImport); handled {
+			if ok {
+				return resolved, false
+			}
+			return "", false
 		}
 	}
 
@@ -524,7 +583,7 @@ func (r *Resolver) resolvePHPIncludePath(sourceFile, rawImport string) (string, 
 	return "", false
 }
 
-func (r *Resolver) resolveAlias(alias string, targets []aliasTarget, rawImport string) (string, bool) {
+func (r *Resolver) resolveAlias(alias string, targets []aliasTarget, rawImport string) (string, bool, bool) {
 	alias = Normalize(alias)
 	rawImport = Normalize(rawImport)
 	rawImport = strings.TrimPrefix(rawImport, "/")
@@ -532,32 +591,32 @@ func (r *Resolver) resolveAlias(alias string, targets []aliasTarget, rawImport s
 	wildcard := strings.Contains(alias, "*")
 	if !wildcard {
 		if rawImport != alias {
-			return "", false
+			return "", false, false
 		}
 		for _, target := range targets {
 			base := r.aliasTargetBase(target, "")
 			if resolved, ok := r.probeLocal(base); ok {
-				return resolved, true
+				return resolved, true, true
 			}
 		}
-		return "", false
+		return "", true, false
 	}
 
 	prefix := strings.Split(alias, "*")[0]
 	suffix := strings.Split(alias, "*")[1]
 	if !strings.HasPrefix(rawImport, prefix) || !strings.HasSuffix(rawImport, suffix) {
-		return "", false
+		return "", false, false
 	}
 	middle := strings.TrimSuffix(strings.TrimPrefix(rawImport, prefix), suffix)
 
 	for _, target := range targets {
 		base := r.aliasTargetBase(target, middle)
 		if resolved, ok := r.probeLocal(base); ok {
-			return resolved, true
+			return resolved, true, true
 		}
 	}
 
-	return "", false
+	return "", true, false
 }
 
 func (r *Resolver) aliasTargetBase(target aliasTarget, middle string) string {

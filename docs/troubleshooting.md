@@ -4,6 +4,8 @@
 
 - Ensure `project.tsconfig` is correct, or define `project.aliases`
 - Confirm aliases map to real files and index files
+- For workspace packages, confirm the imported package has a local `package.json` with a matching `name`
+- For package `exports`/`imports`, confirm targets point to local files and not only built `dist/` artifacts
 
 ## Too many false positives
 

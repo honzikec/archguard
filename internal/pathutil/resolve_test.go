@@ -479,6 +479,196 @@ func TestResolverAcceptsCommentedTSConfigWithoutCompilerOptions(t *testing.T) {
 	}
 }
 
+func TestResolveWorkspacePackageFromPackageJSONWorkspaces(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "package.json"), `{"workspaces":["apps/*","packages/*"]}`)
+	mustWrite(t, filepath.Join(dir, "apps", "web", "src", "page.ts"), `import { Button } from "@acme/ui/button"`)
+	mustWrite(t, filepath.Join(dir, "packages", "ui", "package.json"), `{
+  "name": "@acme/ui",
+  "exports": {
+    ".": { "import": "./src/index.ts" },
+    "./button": "./src/button.ts"
+  }
+}`)
+	mustWrite(t, filepath.Join(dir, "packages", "ui", "src", "index.ts"), `export * from "./button"`)
+	mustWrite(t, filepath.Join(dir, "packages", "ui", "src", "button.ts"), `export const Button = 1`)
+
+	wd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(wd) }()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	resolver, err := pathutil.NewResolver(".", config.ProjectSettings{Roots: []string{"apps/web", "packages/ui"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, isPkg := resolver.Resolve("apps/web/src/page.ts", "@acme/ui/button")
+	if isPkg || resolved != "packages/ui/src/button.ts" {
+		t.Fatalf("unexpected workspace subpath resolution: resolved=%s isPkg=%t", resolved, isPkg)
+	}
+	resolved, isPkg = resolver.Resolve("apps/web/src/page.ts", "@acme/ui")
+	if isPkg || resolved != "packages/ui/src/index.ts" {
+		t.Fatalf("unexpected workspace root resolution: resolved=%s isPkg=%t", resolved, isPkg)
+	}
+	if got := resolver.Diagnostics().WorkspacePackageImports; got != 2 {
+		t.Fatalf("expected two workspace package resolutions, got %d", got)
+	}
+}
+
+func TestResolveWorkspacePackageFromPNPMWorkspace(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "pnpm-workspace.yaml"), "packages:\n  - packages/*\n")
+	mustWrite(t, filepath.Join(dir, "src", "index.ts"), `import { core } from "@acme/core"`)
+	mustWrite(t, filepath.Join(dir, "packages", "core", "package.json"), `{
+  "name": "@acme/core",
+  "main": "./src/index.ts"
+}`)
+	mustWrite(t, filepath.Join(dir, "packages", "core", "src", "index.ts"), `export const core = 1`)
+
+	wd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(wd) }()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	resolver, err := pathutil.NewResolver(".", config.ProjectSettings{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, isPkg := resolver.Resolve("src/index.ts", "@acme/core")
+	if isPkg || resolved != "packages/core/src/index.ts" {
+		t.Fatalf("unexpected pnpm workspace package resolution: resolved=%s isPkg=%t", resolved, isPkg)
+	}
+}
+
+func TestResolvePackageImportsAlias(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "packages", "app", "package.json"), `{
+  "name": "@acme/app",
+  "imports": {
+    "#domain/*": "./src/domain/*"
+  }
+}`)
+	mustWrite(t, filepath.Join(dir, "packages", "app", "src", "index.ts"), `import user from "#domain/user"`)
+	mustWrite(t, filepath.Join(dir, "packages", "app", "src", "domain", "user.ts"), `export const user = 1`)
+
+	wd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(wd) }()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	resolver, err := pathutil.NewResolver(".", config.ProjectSettings{Roots: []string{"packages/app/src"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, isPkg := resolver.Resolve("packages/app/src/index.ts", "#domain/user")
+	if isPkg || resolved != "packages/app/src/domain/user.ts" {
+		t.Fatalf("unexpected package imports alias resolution: resolved=%s isPkg=%t", resolved, isPkg)
+	}
+}
+
+func TestResolveWorkspacePackageUnresolvedIsLocalDiagnostic(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "package.json"), `{"workspaces":["packages/*"]}`)
+	mustWrite(t, filepath.Join(dir, "src", "index.ts"), `import missing from "@acme/ui/missing"`)
+	mustWrite(t, filepath.Join(dir, "packages", "ui", "package.json"), `{"name":"@acme/ui","exports":{".":"./src/index.ts","./missing":"react"}}`)
+	mustWrite(t, filepath.Join(dir, "packages", "ui", "src", "index.ts"), `export const ui = 1`)
+
+	wd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(wd) }()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	resolver, err := pathutil.NewResolver(".", config.ProjectSettings{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, isPkg := resolver.Resolve("src/index.ts", "@acme/ui/missing")
+	if isPkg || resolved != "" {
+		t.Fatalf("expected unresolved local workspace import to stay non-package: resolved=%s isPkg=%t", resolved, isPkg)
+	}
+	diagnostics := resolver.Diagnostics()
+	if diagnostics.UnresolvedLocalImports != 1 {
+		t.Fatalf("expected unresolved local diagnostic, got %+v", diagnostics)
+	}
+	if diagnostics.IgnoredResolutionCases != 1 {
+		t.Fatalf("expected ignored export fallback diagnostic, got %+v", diagnostics)
+	}
+}
+
+func TestResolvePackageBasedTSConfigExtendsFromWorkspacePackage(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "package.json"), `{"workspaces":["configs/*"]}`)
+	mustWrite(t, filepath.Join(dir, "configs", "tsconfig", "package.json"), `{
+  "name": "@acme/tsconfig",
+  "tsconfig": "base.json"
+}`)
+	mustWrite(t, filepath.Join(dir, "configs", "tsconfig", "base.json"), `{
+  "compilerOptions": {
+    "baseUrl": "../..",
+    "paths": {
+      "@shared/*": ["src/shared/*"]
+    }
+  }
+}`)
+	mustWrite(t, filepath.Join(dir, "tsconfig.json"), `{"extends":"@acme/tsconfig"}`)
+	mustWrite(t, filepath.Join(dir, "src", "shared", "util.ts"), `export const util = 1`)
+
+	wd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(wd) }()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	resolver, err := pathutil.NewResolver(".", config.ProjectSettings{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, isPkg := resolver.Resolve("src/index.ts", "@shared/util")
+	if isPkg || resolved != "src/shared/util.ts" {
+		t.Fatalf("unexpected workspace package tsconfig extends resolution: resolved=%s isPkg=%t", resolved, isPkg)
+	}
+}
+
+func TestResolvePackageBasedTSConfigExtendsFromNodeModules(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "node_modules", "@acme", "tsconfig", "package.json"), `{"name":"@acme/tsconfig"}`)
+	mustWrite(t, filepath.Join(dir, "node_modules", "@acme", "tsconfig", "base.json"), `{
+  "compilerOptions": {
+    "baseUrl": "../../..",
+    "paths": {
+      "@nm/*": ["src/nm/*"]
+    }
+  }
+}`)
+	mustWrite(t, filepath.Join(dir, "tsconfig.json"), `{"extends":"@acme/tsconfig/base"}`)
+	mustWrite(t, filepath.Join(dir, "src", "nm", "util.ts"), `export const util = 1`)
+
+	wd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(wd) }()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	resolver, err := pathutil.NewResolver(".", config.ProjectSettings{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, isPkg := resolver.Resolve("src/index.ts", "@nm/util")
+	if isPkg || resolved != "src/nm/util.ts" {
+		t.Fatalf("unexpected node_modules package tsconfig extends resolution: resolved=%s isPkg=%t", resolved, isPkg)
+	}
+}
+
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

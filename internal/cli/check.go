@@ -93,6 +93,15 @@ func runCheck(args []string) int {
 		if common.debug && result.Diagnostics.NonLiteralDynamicImports > 0 {
 			fmt.Fprintf(os.Stderr, "ignored non-literal dynamic imports: %d\n", result.Diagnostics.NonLiteralDynamicImports)
 		}
+		if common.debug && result.Diagnostics.WorkspacePackageImports > 0 {
+			fmt.Fprintf(os.Stderr, "workspace package imports resolved: %d\n", result.Diagnostics.WorkspacePackageImports)
+		}
+		if common.debug && result.Diagnostics.UnresolvedLocalImports > 0 {
+			fmt.Fprintf(os.Stderr, "unresolved local-like imports: %d\n", result.Diagnostics.UnresolvedLocalImports)
+		}
+		if common.debug && result.Diagnostics.IgnoredResolutionCases > 0 {
+			fmt.Fprintf(os.Stderr, "ignored resolution cases: %d\n", result.Diagnostics.IgnoredResolutionCases)
+		}
 
 		findings, err := policy.Evaluate(cfg, result.Imports, result.Files, result.Graph)
 		if err != nil {
@@ -123,7 +132,7 @@ func runCheck(args []string) int {
 			findings = findings[:*maxFindings]
 		}
 
-		summary := buildSummary(findings, len(result.Files), len(result.Imports), result.Diagnostics.ParseErrors, result.Diagnostics.FilesSkipped, suppressedFindings, int(time.Since(started).Milliseconds()), configDir, effectiveRoots)
+		summary := buildSummary(findings, len(result.Files), len(result.Imports), result.Diagnostics, suppressedFindings, int(time.Since(started).Milliseconds()), configDir, effectiveRoots)
 
 		var reportErr error
 		switch common.format {
@@ -166,17 +175,20 @@ func runCheck(args []string) int {
 	return code
 }
 
-func buildSummary(findings []model.Finding, filesScanned, importsScanned, parseErrors, filesSkipped, suppressedFindings, durationMS int, configDir string, effectiveRoots []string) report.Summary {
+func buildSummary(findings []model.Finding, filesScanned, importsScanned int, diagnostics analysis.Diagnostics, suppressedFindings, durationMS int, configDir string, effectiveRoots []string) report.Summary {
 	summary := report.Summary{
-		FilesScanned:       filesScanned,
-		ImportsScanned:     importsScanned,
-		FindingsTotal:      len(findings),
-		SuppressedFindings: suppressedFindings,
-		ParseErrors:        parseErrors,
-		FilesSkipped:       filesSkipped,
-		ConfigDir:          filepath.ToSlash(filepath.Clean(configDir)),
-		EffectiveRoots:     append([]string{}, effectiveRoots...),
-		DurationMS:         durationMS,
+		FilesScanned:            filesScanned,
+		ImportsScanned:          importsScanned,
+		FindingsTotal:           len(findings),
+		SuppressedFindings:      suppressedFindings,
+		ParseErrors:             diagnostics.ParseErrors,
+		FilesSkipped:            diagnostics.FilesSkipped,
+		WorkspacePackageImports: diagnostics.WorkspacePackageImports,
+		UnresolvedLocalImports:  diagnostics.UnresolvedLocalImports,
+		IgnoredResolutionCases:  diagnostics.IgnoredResolutionCases,
+		ConfigDir:               filepath.ToSlash(filepath.Clean(configDir)),
+		EffectiveRoots:          append([]string{}, effectiveRoots...),
+		DurationMS:              durationMS,
 	}
 	for _, f := range findings {
 		switch f.Severity {

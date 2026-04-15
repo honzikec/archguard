@@ -73,4 +73,11 @@ func printSummary(b *bytes.Buffer, summary Summary) {
 	if summary.ConfigDir != "" {
 		fmt.Fprintf(b, "Config: dir=%s roots=%v\n", summary.ConfigDir, summary.EffectiveRoots)
 	}
+	if summary.WorkspacePackageImports > 0 || summary.UnresolvedLocalImports > 0 || summary.IgnoredResolutionCases > 0 {
+		fmt.Fprintf(b, "Resolver: workspace_package_imports=%d unresolved_local_imports=%d ignored_resolution_cases=%d\n",
+			summary.WorkspacePackageImports,
+			summary.UnresolvedLocalImports,
+			summary.IgnoredResolutionCases,
+		)
+	}
 }

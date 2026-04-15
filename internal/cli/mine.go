@@ -217,6 +217,15 @@ func runMine(args []string) int {
 			if analysisResult.Diagnostics.NonLiteralDynamicImports > 0 {
 				fmt.Fprintf(os.Stderr, "mine ignored non-literal dynamic imports: %d\n", analysisResult.Diagnostics.NonLiteralDynamicImports)
 			}
+			if analysisResult.Diagnostics.WorkspacePackageImports > 0 {
+				fmt.Fprintf(os.Stderr, "mine workspace package imports resolved: %d\n", analysisResult.Diagnostics.WorkspacePackageImports)
+			}
+			if analysisResult.Diagnostics.UnresolvedLocalImports > 0 {
+				fmt.Fprintf(os.Stderr, "mine unresolved local-like imports: %d\n", analysisResult.Diagnostics.UnresolvedLocalImports)
+			}
+			if analysisResult.Diagnostics.IgnoredResolutionCases > 0 {
+				fmt.Fprintf(os.Stderr, "mine ignored resolution cases: %d\n", analysisResult.Diagnostics.IgnoredResolutionCases)
+			}
 			if debugStats != nil && len(debugStats.Dropped) > 0 {
 				keys := make([]string, 0, len(debugStats.Dropped))
 				for key := range debugStats.Dropped {
