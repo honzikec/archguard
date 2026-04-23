@@ -18,16 +18,20 @@ type File struct {
 }
 
 type Entry struct {
-	Fingerprint string `json:"fingerprint"`
-	RuleID      string `json:"rule_id"`
-	RuleKind    string `json:"rule_kind"`
-	Severity    string `json:"severity"`
-	FilePath    string `json:"file_path"`
-	Line        int    `json:"line"`
-	Column      int    `json:"column"`
-	Message     string `json:"message,omitempty"`
-	RawImport   string `json:"raw_import,omitempty"`
-	Details     string `json:"details,omitempty"`
+	Fingerprint   string `json:"fingerprint"`
+	RuleID        string `json:"rule_id"`
+	RuleKind      string `json:"rule_kind"`
+	Severity      string `json:"severity"`
+	FilePath      string `json:"file_path"`
+	Line          int    `json:"line"`
+	Column        int    `json:"column"`
+	Message       string `json:"message,omitempty"`
+	RawImport     string `json:"raw_import,omitempty"`
+	Details       string `json:"details,omitempty"`
+	Evidence      string `json:"evidence,omitempty"`
+	Remediation   string `json:"remediation,omitempty"`
+	MatchedScope  string `json:"matched_scope,omitempty"`
+	MatchedTarget string `json:"matched_target,omitempty"`
 }
 
 func Write(path string, findings []model.Finding, generatedAt time.Time) error {
@@ -103,15 +107,19 @@ func Filter(findings []model.Finding, entries map[string]Entry) ([]model.Finding
 
 func entryFromFinding(f model.Finding) Entry {
 	return Entry{
-		Fingerprint: f.Fingerprint,
-		RuleID:      f.RuleID,
-		RuleKind:    f.RuleKind,
-		Severity:    f.Severity,
-		FilePath:    f.FilePath,
-		Line:        f.Line,
-		Column:      f.Column,
-		Message:     f.Message,
-		RawImport:   f.RawImport,
-		Details:     f.Details,
+		Fingerprint:   f.Fingerprint,
+		RuleID:        f.RuleID,
+		RuleKind:      f.RuleKind,
+		Severity:      f.Severity,
+		FilePath:      f.FilePath,
+		Line:          f.Line,
+		Column:        f.Column,
+		Message:       f.Message,
+		RawImport:     f.RawImport,
+		Details:       f.Details,
+		Evidence:      f.Evidence,
+		Remediation:   f.Remediation,
+		MatchedScope:  f.MatchedScope,
+		MatchedTarget: f.MatchedTarget,
 	}
 }

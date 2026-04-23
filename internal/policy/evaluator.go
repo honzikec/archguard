@@ -43,6 +43,7 @@ func Evaluate(cfg *config.Config, imports []model.ImportRef, files []string, g *
 				}
 				f := baseFinding(rule, imp.SourceFile, imp.Line, imp.Column, imp.RawImport)
 				f.Message = defaultMessage(rule, fmt.Sprintf("%s imports %s", imp.SourceFile, imp.ResolvedPath))
+				applyFindingMetadata(rule, &f, imp.SourceFile, imp.ResolvedPath)
 				appendFinding(&findings, seen, f)
 			}
 		case config.KindNoPackage:
@@ -61,6 +62,7 @@ func Evaluate(cfg *config.Config, imports []model.ImportRef, files []string, g *
 				}
 				f := baseFinding(rule, imp.SourceFile, imp.Line, imp.Column, imp.RawImport)
 				f.Message = defaultMessage(rule, fmt.Sprintf("%s imports package %s", imp.SourceFile, imp.RawImport))
+				applyFindingMetadata(rule, &f, imp.SourceFile, imp.RawImport)
 				appendFinding(&findings, seen, f)
 			}
 		case config.KindFilePattern:
@@ -84,6 +86,10 @@ func Evaluate(cfg *config.Config, imports []model.ImportRef, files []string, g *
 				}
 				f := baseFinding(rule, file, 1, 1, "")
 				f.Message = defaultMessage(rule, fmt.Sprintf("%s does not match required file pattern", file))
+				f.MatchedScope = firstMatchingScope(rule.Scope, file)
+				f.MatchedTarget = targetPreview(rule)
+				f.Evidence = fmt.Sprintf("file %s matched scope %s but filename %s did not match expected pattern(s) %s", file, f.MatchedScope, path.Base(file), targetPreview(rule))
+				f.Remediation = RuleRemediation(rule)
 				appendFinding(&findings, seen, f)
 			}
 		case config.KindNoCycle:
@@ -96,6 +102,9 @@ func Evaluate(cfg *config.Config, imports []model.ImportRef, files []string, g *
 				f := baseFinding(rule, cycle[0], 1, 1, "")
 				f.Details = chain
 				f.Message = defaultMessage(rule, "dependency cycle detected: "+chain)
+				f.MatchedScope = firstMatchingScope(rule.Scope, cycle[0])
+				f.Evidence = "cycle path: " + chain
+				f.Remediation = RuleRemediation(rule)
 				appendFinding(&findings, seen, f)
 			}
 		case config.KindPattern:
@@ -288,6 +297,7 @@ func evaluatePatternDependencyConstraint(rule config.Rule, imports []model.Impor
 			}
 			f := baseFinding(rule, imp.SourceFile, imp.Line, imp.Column, imp.RawImport)
 			f.Message = defaultMessage(rule, fmt.Sprintf("%s imports package %s", imp.SourceFile, imp.RawImport))
+			applyFindingMetadata(rule, &f, imp.SourceFile, imp.RawImport)
 			findings = append(findings, f)
 			continue
 		}
@@ -304,6 +314,7 @@ func evaluatePatternDependencyConstraint(rule config.Rule, imports []model.Impor
 		}
 		f := baseFinding(rule, imp.SourceFile, imp.Line, imp.Column, imp.RawImport)
 		f.Message = defaultMessage(rule, fmt.Sprintf("%s imports %s", imp.SourceFile, imp.ResolvedPath))
+		applyFindingMetadata(rule, &f, imp.SourceFile, imp.ResolvedPath)
 		findings = append(findings, f)
 	}
 	return findings
@@ -333,6 +344,10 @@ func evaluatePatternConstructionPolicy(rule config.Rule, files []string, project
 		}
 		f := baseFinding(rule, c.FilePath, c.Line, c.Column, c.ClassName)
 		f.Message = defaultMessage(rule, fmt.Sprintf("direct construction of service %s outside composition root", c.ClassName))
+		applyFindingMetadata(rule, &f, c.FilePath, c.ResolvedFile)
+		if c.ResolvedFile != "" {
+			f.Evidence = fmt.Sprintf("source %s matched scope %s; direct construction of %s resolved to %s", c.FilePath, f.MatchedScope, c.ClassName, c.ResolvedFile)
+		}
 		findings = append(findings, f)
 	}
 

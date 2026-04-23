@@ -6,13 +6,14 @@ This guide gets ArchGuard usable in a real repository quickly, including monorep
 
 ```bash
 go install github.com/honzikec/archguard/cmd/archguard@vX.Y.Z
-archguard init
+archguard init --guided
+archguard init --guided --write-config --write-baseline
 archguard check --config archguard.yaml --format text
 ```
 
 ## 2) Scope the project roots (10 minutes)
 
-Edit `archguard.yaml`:
+Review the generated `archguard.yaml`:
 
 - narrow `project.roots` to real source roots
 - keep `project.exclude` aggressive (`node_modules`, build output, coverage)

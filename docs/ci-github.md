@@ -10,59 +10,46 @@ Required workflow permissions:
 - `contents: read`
 - `security-events: write`
 
-Install ArchGuard from a pinned tag before running the snippets below:
+Use the published GitHub Action for the common path:
 
 ```yaml
-- name: Install ArchGuard
-  run: go install github.com/honzikec/archguard/cmd/archguard@vX.Y.Z
+- name: ArchGuard
+  uses: honzikec/archguard-action@v1
+  with:
+    config: archguard.yaml
+    format: sarif
+    parse-error-policy: error
+    severity-threshold: error
+    enforce: true
+    upload-sarif: true
 ```
 
 ## Enforce mode (recommended)
 
 ```yaml
-- name: Run ArchGuard (enforce)
-  id: archguard
-  run: |
-    set +e
-    archguard check --config archguard.yaml --format sarif --parse-error-policy error > archguard-results.sarif
-    code=$?
-    echo "exit_code=$code" >> "$GITHUB_OUTPUT"
-    exit 0
-
-- name: Upload SARIF
-  if: always()
-  uses: github/codeql-action/upload-sarif@v4
+- name: ArchGuard
+  uses: honzikec/archguard-action@v1
   with:
-    sarif_file: archguard-results.sarif
-    category: archguard
-
-- name: Enforce result
-  if: always() && steps.archguard.outputs.exit_code != '0'
-  run: exit 1
+    config: archguard.yaml
+    format: sarif
+    parse-error-policy: error
+    severity-threshold: error
+    enforce: true
+    upload-sarif: true
 ```
 
 ## Audit mode (non-blocking violations)
 
 ```yaml
-- name: Run ArchGuard (audit)
-  id: archguard
-  run: |
-    set +e
-    archguard check --config archguard.yaml --format sarif > archguard-results.sarif
-    code=$?
-    echo "exit_code=$code" >> "$GITHUB_OUTPUT"
-    exit 0
-
-- name: Upload SARIF
-  if: always()
-  uses: github/codeql-action/upload-sarif@v4
+- name: ArchGuard
+  uses: honzikec/archguard-action@v1
   with:
-    sarif_file: archguard-results.sarif
-    category: archguard
-
-- name: Fail only on runtime/config errors
-  if: always() && steps.archguard.outputs.exit_code == '2'
-  run: exit 1
+    config: archguard.yaml
+    format: sarif
+    parse-error-policy: error
+    severity-threshold: error
+    enforce: false
+    upload-sarif: true
 ```
 
 ## Changed-file strategies
@@ -73,6 +60,7 @@ Install ArchGuard from a pinned tag before running the snippets below:
 
 Notes:
 
+- The action installs the published ArchGuard binary and preserves normal CLI exit-code behavior.
 - Uploading SARIF from forked pull requests is blocked by GitHub token permissions.
 - Guard the upload step to skip fork PRs, or use a `pull_request_target` strategy only if your repository security model allows it.
 - `--changed-against <ref>` requires that the ref exists in checkout history (set `actions/checkout` `fetch-depth: 0` when needed).

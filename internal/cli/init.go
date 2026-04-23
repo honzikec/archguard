@@ -21,6 +21,18 @@ func runInit(args []string) int {
 			return runInitAdapter(args[1:])
 		}
 	}
+	for _, arg := range args {
+		if arg == "--guided" {
+			filtered := make([]string, 0, len(args)-1)
+			for _, item := range args {
+				if item == "--guided" {
+					continue
+				}
+				filtered = append(filtered, item)
+			}
+			return runInitGuided(filtered)
+		}
+	}
 
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	setFlagSetOutput(fs)

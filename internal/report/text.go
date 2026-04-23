@@ -50,6 +50,9 @@ func PrintText(findings []model.Finding, summary Summary) error {
 				fmt.Fprintf(&b, " [%s]", f.Details)
 			}
 			fmt.Fprintln(&b)
+			if f.Remediation != "" {
+				fmt.Fprintf(&b, "    hint: %s\n", f.Remediation)
+			}
 		}
 	}
 	printSummary(&b, summary)

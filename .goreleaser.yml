@@ -11,11 +11,14 @@ builds:
     main: ./cmd/archguard
     binary: archguard
     env:
-      - CGO_ENABLED=1
+      - CGO_ENABLED=0
     goos:
       - linux
+      - darwin
+      - windows
     goarch:
       - amd64
+      - arm64
     ldflags:
       - -s -w
       - -X github.com/honzikec/archguard/internal/cli.Version={{.Version}}
@@ -37,7 +40,19 @@ archives:
           - zip
 
 checksum:
-  name_template: checksums_linux_amd64.txt
+  name_template: checksums.txt
+
+brews:
+  - repository:
+      owner: honzikec
+      name: homebrew-tap
+      branch: main
+    directory: Formula
+    homepage: https://github.com/honzikec/archguard
+    description: Deterministic architecture policy checker for TS/JS/PHP repositories
+    license: MIT
+    test: |
+      system "#{bin}/archguard", "version"
 
 release:
   mode: append

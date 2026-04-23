@@ -1,0 +1,15 @@
+{
+  "name": "@archguard/cli",
+  "version": "0.0.0-dev",
+  "description": "npm wrapper for the ArchGuard CLI",
+  "license": "MIT",
+  "bin": {
+    "archguard": "./bin/archguard.js"
+  },
+  "files": [
+    "bin"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

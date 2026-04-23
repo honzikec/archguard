@@ -16,6 +16,7 @@ type MineOutput struct {
 
 type EmitOptions struct {
 	NoCycleSeverity string
+	Project         *config.ProjectSettings
 }
 
 type MineNormalizationStats struct {
@@ -105,88 +106,180 @@ func PrintMineJSON(candidates []Candidate, catalogMatches []PatternMatch, metada
 	fmt.Println(string(data))
 }
 
-func EmitStarterConfigWithCatalog(candidates []Candidate, adopted []config.Rule, opts EmitOptions) string {
-	noCycleSeverity := strings.ToLower(strings.TrimSpace(opts.NoCycleSeverity))
-	if noCycleSeverity != config.SeverityError && noCycleSeverity != config.SeverityWarning {
-		noCycleSeverity = config.SeverityWarning
+func BuildStarterConfigWithCatalog(candidates []Candidate, adopted []config.Rule, opts EmitOptions) *config.Config {
+	project := config.DefaultProjectSettings()
+	if opts.Project != nil {
+		project = *opts.Project
+		if len(project.Roots) == 0 {
+			project.Roots = config.DefaultProjectSettings().Roots
+		}
+		if len(project.Include) == 0 {
+			project.Include = config.DefaultProjectSettings().Include
+		}
+		if len(project.Exclude) == 0 {
+			project.Exclude = config.DefaultProjectSettings().Exclude
+		}
+		if project.Aliases == nil {
+			project.Aliases = map[string][]string{}
+		}
 	}
 
-	var b strings.Builder
-	b.WriteString("$schema: \"./schemas/archguard.v1.schema.json\"\n")
-	b.WriteString("version: 1\n")
-	b.WriteString("project:\n")
-	b.WriteString("  roots: [\".\"]\n")
-	b.WriteString("  include: [\"**/*.ts\", \"**/*.tsx\", \"**/*.mts\", \"**/*.cts\", \"**/*.js\", \"**/*.jsx\", \"**/*.mjs\", \"**/*.cjs\", \"**/*.php\", \"**/*.phtml\"]\n")
-	b.WriteString("  exclude: [\"**/node_modules/**\", \"**/dist/**\", \"**/build/**\", \"**/.next/**\", \"**/coverage/**\", \"**/.git/**\", \"**/vendor/**\", \"**/runtime/**\", \"**/storage/**\", \"**/cache/**\", \"**/migrations/**\"]\n")
-	b.WriteString("rules:\n")
+	cfg := &config.Config{
+		Schema:  "./schemas/archguard.v1.schema.json",
+		Version: 1,
+		Project: project,
+		Rules:   make([]config.Rule, 0, len(candidates)+len(adopted)),
+	}
 
 	for i, c := range candidates {
 		severity := c.Severity
 		if c.Kind == config.KindNoCycle {
-			severity = noCycleSeverity
-		}
-		b.WriteString(fmt.Sprintf("  - id: MINED-%03d\n", i+1))
-		b.WriteString(fmt.Sprintf("    kind: %s\n", c.Kind))
-		b.WriteString(fmt.Sprintf("    severity: %s\n", severity))
-		b.WriteString("    scope:\n")
-		for _, s := range c.Scope {
-			b.WriteString(fmt.Sprintf("      - %q\n", s))
-		}
-		if len(c.Target) > 0 {
-			b.WriteString("    target:\n")
-			for _, t := range c.Target {
-				b.WriteString(fmt.Sprintf("      - %q\n", t))
+			override := strings.ToLower(strings.TrimSpace(opts.NoCycleSeverity))
+			if override != config.SeverityError && override != config.SeverityWarning {
+				override = config.SeverityWarning
 			}
+			severity = override
 		}
-		b.WriteString(fmt.Sprintf("    message: %q\n", c.Evidence))
-	}
-
-	if len(adopted) == 0 {
-		return b.String()
+		cfg.Rules = append(cfg.Rules, config.Rule{
+			ID:       fmt.Sprintf("MINED-%03d", i+1),
+			Kind:     c.Kind,
+			Severity: severity,
+			Scope:    append([]string{}, c.Scope...),
+			Target:   append([]string{}, c.Target...),
+			Message:  c.Evidence,
+		})
 	}
 
 	sort.Slice(adopted, func(i, j int) bool {
 		return adopted[i].ID < adopted[j].ID
 	})
-
 	for _, rule := range adopted {
-		b.WriteString(fmt.Sprintf("  - id: %s\n", rule.ID))
-		b.WriteString(fmt.Sprintf("    kind: %s\n", rule.Kind))
-		b.WriteString(fmt.Sprintf("    severity: %s\n", rule.Severity))
-		if rule.Template != "" {
-			b.WriteString(fmt.Sprintf("    template: %s\n", rule.Template))
-		}
-		b.WriteString("    scope:\n")
-		for _, s := range rule.Scope {
-			b.WriteString(fmt.Sprintf("      - %q\n", s))
-		}
-		if len(rule.Target) > 0 {
-			b.WriteString("    target:\n")
-			for _, t := range rule.Target {
-				b.WriteString(fmt.Sprintf("      - %q\n", t))
-			}
-		}
-		if len(rule.Except) > 0 {
-			b.WriteString("    except:\n")
-			for _, e := range rule.Except {
-				b.WriteString(fmt.Sprintf("      - %q\n", e))
-			}
-		}
-		if len(rule.Params) > 0 {
-			keys := make([]string, 0, len(rule.Params))
-			for k := range rule.Params {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-			b.WriteString("    params:\n")
-			for _, k := range keys {
-				b.WriteString(fmt.Sprintf("      %s: %q\n", k, rule.Params[k]))
-			}
-		}
-		if rule.Message != "" {
-			b.WriteString(fmt.Sprintf("    message: %q\n", rule.Message))
-		}
+		cfg.Rules = append(cfg.Rules, deepCopyRule(rule))
 	}
 
+	return cfg
+}
+
+func EmitStarterConfigWithCatalog(candidates []Candidate, adopted []config.Rule, opts EmitOptions) string {
+	cfg := BuildStarterConfigWithCatalog(candidates, adopted, opts)
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("$schema: %q\n", cfg.Schema))
+	b.WriteString(fmt.Sprintf("version: %d\n", cfg.Version))
+	b.WriteString("project:\n")
+	b.WriteString(renderProjectBlock(cfg.Project))
+	if len(cfg.Rules) == 0 {
+		b.WriteString("rules: []\n")
+		return b.String()
+	}
+	b.WriteString("rules:\n")
+	for _, rule := range cfg.Rules {
+		b.WriteString(renderRuleBlock(rule))
+	}
 	return b.String()
+}
+
+func renderProjectBlock(project config.ProjectSettings) string {
+	var b strings.Builder
+	b.WriteString(renderInlineStringList("  roots", project.Roots))
+	b.WriteString(renderInlineStringList("  include", project.Include))
+	b.WriteString(renderInlineStringList("  exclude", project.Exclude))
+	if strings.TrimSpace(project.Framework) != "" {
+		b.WriteString(fmt.Sprintf("  framework: %s\n", project.Framework))
+	}
+	if strings.TrimSpace(project.Language) != "" {
+		b.WriteString(fmt.Sprintf("  language: %s\n", project.Language))
+	}
+	if strings.TrimSpace(project.Tsconfig) != "" {
+		b.WriteString(fmt.Sprintf("  tsconfig: %q\n", project.Tsconfig))
+	}
+	if len(project.Aliases) > 0 {
+		keys := make([]string, 0, len(project.Aliases))
+		for key := range project.Aliases {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		b.WriteString("  aliases:\n")
+		for _, key := range keys {
+			b.WriteString(fmt.Sprintf("    %q:\n", key))
+			for _, target := range project.Aliases[key] {
+				b.WriteString(fmt.Sprintf("      - %q\n", target))
+			}
+		}
+	}
+	return b.String()
+}
+
+func renderRuleBlock(rule config.Rule) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("  - id: %s\n", rule.ID))
+	b.WriteString(fmt.Sprintf("    kind: %s\n", rule.Kind))
+	b.WriteString(fmt.Sprintf("    severity: %s\n", rule.Severity))
+	if strings.TrimSpace(rule.Template) != "" {
+		b.WriteString(fmt.Sprintf("    template: %s\n", rule.Template))
+	}
+	b.WriteString("    scope:\n")
+	for _, value := range rule.Scope {
+		b.WriteString(fmt.Sprintf("      - %q\n", value))
+	}
+	if len(rule.Target) > 0 {
+		b.WriteString("    target:\n")
+		for _, value := range rule.Target {
+			b.WriteString(fmt.Sprintf("      - %q\n", value))
+		}
+	}
+	if len(rule.Except) > 0 {
+		b.WriteString("    except:\n")
+		for _, value := range rule.Except {
+			b.WriteString(fmt.Sprintf("      - %q\n", value))
+		}
+	}
+	if len(rule.Params) > 0 {
+		keys := make([]string, 0, len(rule.Params))
+		for key := range rule.Params {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		b.WriteString("    params:\n")
+		for _, key := range keys {
+			b.WriteString(fmt.Sprintf("      %s: %q\n", key, rule.Params[key]))
+		}
+	}
+	if rule.Message != "" {
+		b.WriteString(fmt.Sprintf("    message: %q\n", rule.Message))
+	}
+	return b.String()
+}
+
+func renderStringList(key string, values []string) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("%s:\n", key))
+	for _, value := range values {
+		b.WriteString(fmt.Sprintf("    - %q\n", value))
+	}
+	return b.String()
+}
+
+func renderInlineStringList(key string, values []string) string {
+	if len(values) == 0 {
+		return fmt.Sprintf("%s: []\n", key)
+	}
+	quoted := make([]string, 0, len(values))
+	for _, value := range values {
+		quoted = append(quoted, fmt.Sprintf("%q", value))
+	}
+	return fmt.Sprintf("%s: [%s]\n", key, strings.Join(quoted, ", "))
+}
+
+func deepCopyRule(rule config.Rule) config.Rule {
+	out := rule
+	out.Scope = append([]string{}, rule.Scope...)
+	out.Target = append([]string{}, rule.Target...)
+	out.Except = append([]string{}, rule.Except...)
+	if rule.Params != nil {
+		out.Params = make(map[string]string, len(rule.Params))
+		for key, value := range rule.Params {
+			out.Params[key] = value
+		}
+	}
+	return out
 }

@@ -1,0 +1,83 @@
+name: ArchGuard
+description: Run ArchGuard architecture checks and optionally upload SARIF results.
+
+inputs:
+  config:
+    description: Path to the ArchGuard config file
+    required: false
+    default: archguard.yaml
+  format:
+    description: Output format for `archguard check`
+    required: false
+    default: sarif
+  enforce:
+    description: Fail the workflow on any non-zero ArchGuard exit code
+    required: false
+    default: "true"
+  changed-against:
+    description: Optional git ref used for changed-file filtering
+    required: false
+    default: ""
+  parse-error-policy:
+    description: Parse/read error policy passed to `archguard check`
+    required: false
+    default: error
+  severity-threshold:
+    description: Blocking threshold passed to `archguard check`
+    required: false
+    default: error
+  upload-sarif:
+    description: Upload SARIF output with github/codeql-action/upload-sarif
+    required: false
+    default: "true"
+  version:
+    description: ArchGuard release tag to install, for example v0.2.0. Defaults to the latest GitHub release.
+    required: false
+    default: latest
+
+outputs:
+  exit_code:
+    description: Exit code returned by `archguard check`
+    value: ${{ steps.archguard.outputs.exit_code }}
+  sarif_file:
+    description: SARIF file path emitted by the action
+    value: ${{ steps.archguard.outputs.sarif_file }}
+
+runs:
+  using: composite
+  steps:
+    - id: install
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/scripts/install-archguard.sh"
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+        ARCHGUARD_BINARY: ${{ env.ARCHGUARD_BINARY }}
+
+    - id: archguard
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/scripts/run-archguard-action.sh"
+      env:
+        ARCHGUARD_BINARY: ${{ steps.install.outputs.binary }}
+        INPUT_CONFIG: ${{ inputs.config }}
+        INPUT_FORMAT: ${{ inputs.format }}
+        INPUT_CHANGED_AGAINST: ${{ inputs.changed-against }}
+        INPUT_PARSE_ERROR_POLICY: ${{ inputs.parse-error-policy }}
+        INPUT_SEVERITY_THRESHOLD: ${{ inputs.severity-threshold }}
+
+    - if: ${{ inputs.upload-sarif == 'true' && inputs.format == 'sarif' }}
+      uses: github/codeql-action/upload-sarif@v4
+      with:
+        sarif_file: ${{ steps.archguard.outputs.sarif_file }}
+        category: archguard
+
+    - if: ${{ inputs.enforce == 'true' && steps.archguard.outputs.exit_code != '0' }}
+      shell: bash
+      run: |
+        echo "ArchGuard failed with exit code ${{ steps.archguard.outputs.exit_code }}."
+        exit 1
+
+    - if: ${{ inputs.enforce != 'true' && steps.archguard.outputs.exit_code == '2' }}
+      shell: bash
+      run: |
+        echo "ArchGuard reported a usage/config/runtime failure."
+        exit 1

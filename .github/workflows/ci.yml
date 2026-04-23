@@ -37,7 +37,7 @@ jobs:
         with:
           distribution: goreleaser
           version: latest
-          args: check .goreleaser.yml .goreleaser.darwin.yml .goreleaser.windows.yml
+          args: check .goreleaser.yml
 
       - name: GoReleaser snapshot build
         uses: goreleaser/goreleaser-action@v6

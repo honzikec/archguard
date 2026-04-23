@@ -17,6 +17,12 @@ It enforces architectural boundaries (imports, packages, file patterns, and cycl
 # Pinned Go install, using the release tag you want
 go install github.com/honzikec/archguard/cmd/archguard@vX.Y.Z
 
+# Homebrew (tap published from GoReleaser)
+brew install honzikec/tap/archguard
+
+# npm wrapper around the released binary
+npx @archguard/cli check --config archguard.yaml
+
 # Or download a tagged binary from GitHub Releases
 ```
 
@@ -28,8 +34,11 @@ ArchGuard requires Go 1.24+ when building from source.
 # Build locally
 GOCACHE=/tmp/go-build go build -o archguard ./cmd/archguard/main.go
 
-# Create starter config
-./archguard init
+# Guided onboarding preview
+./archguard init --guided
+
+# Write starter config + baseline
+./archguard init --guided --write-config --write-baseline
 
 # Run checks
 ./archguard check --config archguard.yaml
@@ -43,7 +52,9 @@ archguard check   --config archguard.yaml --changed-only
 archguard check   --config archguard.yaml --changed-against origin/main --parse-error-policy error
 archguard mine    --config archguard.yaml --format text|yaml|json --catalog builtin
 archguard explain --config archguard.yaml --rule RULE_ID
+archguard explain --config archguard.yaml --finding FINGERPRINT
 archguard init    --config archguard.yaml
+archguard init    --guided [--write-config] [--write-baseline]
 archguard init profile --name my_framework
 archguard version
 ```
@@ -100,21 +111,18 @@ rules:
 
 ## GitHub Actions
 
-For production gating, run ArchGuard in enforce mode (`--parse-error-policy=error` and fail on non-zero exit).
+For production gating, use the published GitHub Action.
 
 ```yaml
-- name: Install ArchGuard
-  run: go install github.com/honzikec/archguard/cmd/archguard@vX.Y.Z
-
-- name: Run ArchGuard
-  run: archguard check --config archguard.yaml --format sarif --parse-error-policy error > archguard-results.sarif
-
-- name: Upload SARIF
-  if: always()
-  uses: github/codeql-action/upload-sarif@v4
+- name: ArchGuard
+  uses: honzikec/archguard-action@v1
   with:
-    sarif_file: archguard-results.sarif
-    category: archguard
+    config: archguard.yaml
+    format: sarif
+    parse-error-policy: error
+    severity-threshold: error
+    enforce: true
+    upload-sarif: true
 ```
 
 Brownfield adoption:

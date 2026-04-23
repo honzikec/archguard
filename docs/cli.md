@@ -82,18 +82,29 @@ Output notes:
 Flags:
 - `--config`
 - `--format` (`text|json`)
-- `--rule` (required)
+- exactly one of:
+  - `--rule` (explain a configured rule)
+  - `--finding` (explain a current finding fingerprint)
 
 ## `archguard init`
 
 Flags:
 - `--config`
 - `--force`
+- `--guided` (recommended onboarding path)
 - `--from-brief` (compile architecture brief YAML/JSON to config)
 - `--out` (output path when using `--from-brief`, default: `--config`)
 
+Guided-init flags:
+- `--write-config`
+- `--write-baseline`
+- `--adopt-catalog-threshold` (`high|medium`)
+- `--ci-mode` (`enforce|audit`)
+- `--baseline-out`
+
 Subcommands:
 - `archguard init` writes a starter config file
+- `archguard init --guided` detects repo shape, recommends a preset, previews a starter config, and prints local/CI adoption commands
 - `archguard init --from-brief architecture-brief.yaml --out archguard.yaml` compiles a harness-agnostic architecture brief into validated config
 - `archguard init profile --name <id> [--dir <path>] [--force]` scaffolds a framework profile package for contributors
 - `archguard init adapter --name <id> [--dir <path>] [--force]` scaffolds a language adapter package for contributors
