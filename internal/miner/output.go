@@ -250,15 +250,6 @@ func renderRuleBlock(rule config.Rule) string {
 	return b.String()
 }
 
-func renderStringList(key string, values []string) string {
-	var b strings.Builder
-	b.WriteString(fmt.Sprintf("%s:\n", key))
-	for _, value := range values {
-		b.WriteString(fmt.Sprintf("    - %q\n", value))
-	}
-	return b.String()
-}
-
 func renderInlineStringList(key string, values []string) string {
 	if len(values) == 0 {
 		return fmt.Sprintf("%s: []\n", key)
