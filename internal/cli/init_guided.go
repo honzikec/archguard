@@ -10,16 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/honzikec/archguard/internal/analysis"
 	"github.com/honzikec/archguard/internal/baseline"
-	"github.com/honzikec/archguard/internal/catalog"
 	"github.com/honzikec/archguard/internal/config"
 	"github.com/honzikec/archguard/internal/framework"
 	"github.com/honzikec/archguard/internal/language"
 	"github.com/honzikec/archguard/internal/miner"
 	"github.com/honzikec/archguard/internal/model"
-	"github.com/honzikec/archguard/internal/policy"
-	"github.com/honzikec/archguard/internal/workspace"
 )
 
 type guidedPreset struct {
@@ -69,14 +65,14 @@ func runInitGuided(args []string) int {
 	}
 
 	code, runErr := withWorkingDir(configDir, func() int {
-		recommendedProject, recommendations, preset, findings, starterConfig, starterText, err := buildGuidedInitRecommendation(cfg, *adoptThreshold)
+		output, err := buildGuidedInitRecommendation(cfg, *adoptThreshold)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "guided init failed: %v\n", err)
 			return 2
 		}
 
 		if !common.quiet {
-			printGuidedSummary(recommendations, preset, findings, starterText, targetPath, *baselineOut, *ciMode, *writeConfig, *writeBaseline)
+			printGuidedSummary(output.Recommendations, output.Preset, output.Findings, output.StarterText, targetPath, *baselineOut, *ciMode, *writeConfig, *writeBaseline)
 		}
 
 		if *writeConfig {
@@ -90,7 +86,7 @@ func runInitGuided(args []string) int {
 					return 2
 				}
 			}
-			if err := os.WriteFile(targetPath, []byte(starterText), 0o644); err != nil {
+			if err := os.WriteFile(targetPath, []byte(output.StarterText), 0o644); err != nil {
 				fmt.Fprintf(os.Stderr, "failed to write config: %v\n", err)
 				return 2
 			}
@@ -98,19 +94,16 @@ func runInitGuided(args []string) int {
 		}
 
 		if *writeBaseline {
-			if len(findings) == 0 {
+			if len(output.Findings) == 0 {
 				fmt.Println("No findings under the guided starter config. Baseline not written.")
 			} else {
-				if err := baseline.Write(*baselineOut, findings, nowUTC()); err != nil {
+				if err := baseline.Write(*baselineOut, output.Findings, nowUTC()); err != nil {
 					fmt.Fprintf(os.Stderr, "failed to write baseline: %v\n", err)
 					return 2
 				}
-				fmt.Printf("Created %s (%d finding(s))\n", *baselineOut, len(findings))
+				fmt.Printf("Created %s (%d finding(s))\n", *baselineOut, len(output.Findings))
 			}
 		}
-
-		_ = recommendedProject
-		_ = starterConfig
 		return 0
 	})
 	if runErr != nil {
@@ -126,103 +119,6 @@ type guidedRecommendations struct {
 	WorkspaceRoots []string
 	Project        config.ProjectSettings
 	Notes          []string
-}
-
-func buildGuidedInitRecommendation(cfg *config.Config, adoptThreshold string) (config.ProjectSettings, guidedRecommendations, guidedPreset, []model.Finding, *config.Config, string, error) {
-	workspaceRoots := append([]string{}, cfg.Project.Roots...)
-	recommendedProject := cloneProjectSettings(cfg.Project)
-	if recommendedProject.Aliases == nil {
-		recommendedProject.Aliases = map[string][]string{}
-	}
-	initialLanguage := language.Resolve(cfg.Project.Language, cfg.Project.Roots)
-	if initialLanguage.Adapter == nil {
-		return config.ProjectSettings{}, guidedRecommendations{}, guidedPreset{}, nil, nil, "", fmt.Errorf("failed to resolve language adapter")
-	}
-	initialFramework := framework.Resolve(cfg.Project.Framework, cfg.Project.Roots)
-	preset := detectGuidedPreset(recommendedProject, initialLanguage, initialFramework, workspaceRoots)
-
-	if preset.ID != phpBrownfieldPresetID {
-		discovered, err := workspace.DiscoverRoots(cfg.Project.Roots)
-		if err != nil {
-			return config.ProjectSettings{}, guidedRecommendations{}, guidedPreset{}, nil, nil, "", err
-		}
-		if len(discovered) > 1 && rootsAreDefault(cfg.Project.Roots) {
-			workspaceRoots = discovered
-		}
-		preset = detectGuidedPreset(recommendedProject, initialLanguage, initialFramework, workspaceRoots)
-	}
-	if len(workspaceRoots) > 0 {
-		recommendedProject.Roots = workspaceRoots
-	}
-
-	notes := applyGuidedProjectDefaults(&recommendedProject, preset)
-
-	languageResolution := language.Resolve(recommendedProject.Language, recommendedProject.Roots)
-	if languageResolution.Adapter == nil {
-		return config.ProjectSettings{}, guidedRecommendations{}, guidedPreset{}, nil, nil, "", fmt.Errorf("failed to resolve language adapter")
-	}
-	frameworkResolution := framework.Resolve(recommendedProject.Framework, recommendedProject.Roots)
-
-	recommendedProject.Language = recommendedLanguage(cfg.Project.Language, languageResolution)
-	recommendedProject.Framework = recommendedFramework(cfg.Project.Framework, frameworkResolution)
-	if preset.ID != phpBrownfieldPresetID && recommendedProject.Tsconfig == "" && fileExists("tsconfig.json") {
-		recommendedProject.Tsconfig = "tsconfig.json"
-	}
-
-	result, err := analysis.Run(recommendedProject, languageResolution.Adapter, analysis.Options{})
-	if err != nil {
-		return config.ProjectSettings{}, guidedRecommendations{}, guidedPreset{}, nil, nil, "", err
-	}
-
-	normalizedGraph, normalizedFiles, _ := framework.NormalizeMiningInputs(result.Graph, result.Files, frameworkResolution.EffectiveProfile())
-	minSupport := 3
-	maxPrevalence := 0.02
-	if len(normalizedFiles) < 20 {
-		minSupport = 1
-		maxPrevalence = 0.25
-	}
-	candidates := miner.Propose(normalizedGraph, normalizedFiles, miner.Options{
-		MinSupport:           minSupport,
-		MaxPrevalence:        maxPrevalence,
-		MaxCandidatesPerKind: 50,
-	})
-	patterns, err := catalog.LoadBuiltin()
-	if err != nil {
-		return config.ProjectSettings{}, guidedRecommendations{}, guidedPreset{}, nil, nil, "", err
-	}
-	catalogMatches, err := miner.MatchCatalog(patterns, candidates, result.Files, cfg.Project, miner.CatalogOptions{})
-	if err != nil {
-		return config.ProjectSettings{}, guidedRecommendations{}, guidedPreset{}, nil, nil, "", err
-	}
-	adopted := miner.AdoptCatalogMatches(catalogMatches, adoptThreshold)
-	candidates, adopted, notes = applyPresetDefaults(candidates, adopted, preset, recommendedProject, notes)
-
-	starterConfig := miner.BuildStarterConfigWithCatalog(candidates, adopted, miner.EmitOptions{
-		NoCycleSeverity: config.SeverityWarning,
-		Project:         &recommendedProject,
-	})
-	findings, err := policy.Evaluate(starterConfig, result.Imports, result.Files, result.Graph)
-	if err != nil {
-		return config.ProjectSettings{}, guidedRecommendations{}, guidedPreset{}, nil, nil, "", err
-	}
-	sort.Slice(findings, func(i, j int) bool {
-		if findings[i].Fingerprint != findings[j].Fingerprint {
-			return findings[i].Fingerprint < findings[j].Fingerprint
-		}
-		return findings[i].FilePath < findings[j].FilePath
-	})
-	starterText := miner.EmitStarterConfigWithCatalog(candidates, adopted, miner.EmitOptions{
-		NoCycleSeverity: config.SeverityWarning,
-		Project:         &recommendedProject,
-	})
-	recommendations := guidedRecommendations{
-		Language:       languageResolution,
-		Framework:      frameworkResolution,
-		WorkspaceRoots: workspaceRoots,
-		Project:        recommendedProject,
-		Notes:          notes,
-	}
-	return recommendedProject, recommendations, preset, findings, starterConfig, starterText, nil
 }
 
 func printGuidedSummary(recommendations guidedRecommendations, preset guidedPreset, findings []model.Finding, starterText, targetPath, baselinePath, ciMode string, writeConfig, writeBaseline bool) {
