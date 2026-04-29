@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -124,40 +125,53 @@ type guidedRecommendations struct {
 	Framework      framework.Resolution
 	WorkspaceRoots []string
 	Project        config.ProjectSettings
+	Notes          []string
 }
 
 func buildGuidedInitRecommendation(cfg *config.Config, adoptThreshold string) (config.ProjectSettings, guidedRecommendations, guidedPreset, []model.Finding, *config.Config, string, error) {
-	languageResolution := language.Resolve(cfg.Project.Language, cfg.Project.Roots)
-	if languageResolution.Adapter == nil {
-		return config.ProjectSettings{}, guidedRecommendations{}, guidedPreset{}, nil, nil, "", fmt.Errorf("failed to resolve language adapter")
-	}
-	frameworkResolution := framework.Resolve(cfg.Project.Framework, cfg.Project.Roots)
-
-	result, err := analysis.Run(cfg.Project, languageResolution.Adapter, analysis.Options{})
-	if err != nil {
-		return config.ProjectSettings{}, guidedRecommendations{}, guidedPreset{}, nil, nil, "", err
-	}
-
 	workspaceRoots := append([]string{}, cfg.Project.Roots...)
-	discovered, err := workspace.DiscoverRoots(cfg.Project.Roots)
-	if err != nil {
-		return config.ProjectSettings{}, guidedRecommendations{}, guidedPreset{}, nil, nil, "", err
-	}
-	if len(discovered) > 1 && rootsAreDefault(cfg.Project.Roots) {
-		workspaceRoots = discovered
-	}
-
 	recommendedProject := cloneProjectSettings(cfg.Project)
-	if len(workspaceRoots) > 0 {
-		recommendedProject.Roots = workspaceRoots
-	}
-	recommendedProject.Language = recommendedLanguage(cfg.Project.Language, languageResolution)
-	recommendedProject.Framework = recommendedFramework(cfg.Project.Framework, frameworkResolution)
 	if recommendedProject.Aliases == nil {
 		recommendedProject.Aliases = map[string][]string{}
 	}
-	if recommendedProject.Tsconfig == "" && fileExists("tsconfig.json") {
+	initialLanguage := language.Resolve(cfg.Project.Language, cfg.Project.Roots)
+	if initialLanguage.Adapter == nil {
+		return config.ProjectSettings{}, guidedRecommendations{}, guidedPreset{}, nil, nil, "", fmt.Errorf("failed to resolve language adapter")
+	}
+	initialFramework := framework.Resolve(cfg.Project.Framework, cfg.Project.Roots)
+	preset := detectGuidedPreset(recommendedProject, initialLanguage, initialFramework, workspaceRoots)
+
+	if preset.ID != phpBrownfieldPresetID {
+		discovered, err := workspace.DiscoverRoots(cfg.Project.Roots)
+		if err != nil {
+			return config.ProjectSettings{}, guidedRecommendations{}, guidedPreset{}, nil, nil, "", err
+		}
+		if len(discovered) > 1 && rootsAreDefault(cfg.Project.Roots) {
+			workspaceRoots = discovered
+		}
+		preset = detectGuidedPreset(recommendedProject, initialLanguage, initialFramework, workspaceRoots)
+	}
+	if len(workspaceRoots) > 0 {
+		recommendedProject.Roots = workspaceRoots
+	}
+
+	notes := applyGuidedProjectDefaults(&recommendedProject, preset)
+
+	languageResolution := language.Resolve(recommendedProject.Language, recommendedProject.Roots)
+	if languageResolution.Adapter == nil {
+		return config.ProjectSettings{}, guidedRecommendations{}, guidedPreset{}, nil, nil, "", fmt.Errorf("failed to resolve language adapter")
+	}
+	frameworkResolution := framework.Resolve(recommendedProject.Framework, recommendedProject.Roots)
+
+	recommendedProject.Language = recommendedLanguage(cfg.Project.Language, languageResolution)
+	recommendedProject.Framework = recommendedFramework(cfg.Project.Framework, frameworkResolution)
+	if preset.ID != phpBrownfieldPresetID && recommendedProject.Tsconfig == "" && fileExists("tsconfig.json") {
 		recommendedProject.Tsconfig = "tsconfig.json"
+	}
+
+	result, err := analysis.Run(recommendedProject, languageResolution.Adapter, analysis.Options{})
+	if err != nil {
+		return config.ProjectSettings{}, guidedRecommendations{}, guidedPreset{}, nil, nil, "", err
 	}
 
 	normalizedGraph, normalizedFiles, _ := framework.NormalizeMiningInputs(result.Graph, result.Files, frameworkResolution.EffectiveProfile())
@@ -181,7 +195,7 @@ func buildGuidedInitRecommendation(cfg *config.Config, adoptThreshold string) (c
 		return config.ProjectSettings{}, guidedRecommendations{}, guidedPreset{}, nil, nil, "", err
 	}
 	adopted := miner.AdoptCatalogMatches(catalogMatches, adoptThreshold)
-	applyPresetDefaults(&candidates, &adopted, detectGuidedPreset(recommendedProject, frameworkResolution, workspaceRoots))
+	candidates, adopted, notes = applyPresetDefaults(candidates, adopted, preset, recommendedProject, notes)
 
 	starterConfig := miner.BuildStarterConfigWithCatalog(candidates, adopted, miner.EmitOptions{
 		NoCycleSeverity: config.SeverityWarning,
@@ -206,8 +220,8 @@ func buildGuidedInitRecommendation(cfg *config.Config, adoptThreshold string) (c
 		Framework:      frameworkResolution,
 		WorkspaceRoots: workspaceRoots,
 		Project:        recommendedProject,
+		Notes:          notes,
 	}
-	preset := detectGuidedPreset(recommendedProject, frameworkResolution, workspaceRoots)
 	return recommendedProject, recommendations, preset, findings, starterConfig, starterText, nil
 }
 
@@ -221,6 +235,12 @@ func printGuidedSummary(recommendations guidedRecommendations, preset guidedPres
 	}
 	if preset.ID != "" {
 		fmt.Printf("Preset: %s - %s\n", preset.Title, preset.Summary)
+	}
+	if len(recommendations.Notes) > 0 {
+		fmt.Println("Notes:")
+		for _, note := range recommendations.Notes {
+			fmt.Printf("- %s\n", note)
+		}
 	}
 	fmt.Printf("Starter config findings today: %d\n", len(findings))
 	fmt.Println()
@@ -297,7 +317,16 @@ func cloneProjectSettings(project config.ProjectSettings) config.ProjectSettings
 	return out
 }
 
-func detectGuidedPreset(project config.ProjectSettings, frameworkResolution framework.Resolution, workspaceRoots []string) guidedPreset {
+const phpBrownfieldPresetID = "php-yii-brownfield"
+
+func detectGuidedPreset(project config.ProjectSettings, languageResolution language.Resolution, frameworkResolution framework.Resolution, workspaceRoots []string) guidedPreset {
+	if strings.TrimSpace(languageResolution.Selected) == "php" && fileExists("composer.json") && looksLikePHPBrownfieldRepo() {
+		return guidedPreset{
+			ID:      phpBrownfieldPresetID,
+			Title:   "PHP Brownfield (Yii-style Monolith)",
+			Summary: "Bias starter guidance toward PHP app roots, cross-area boundaries, and low-noise onboarding.",
+		}
+	}
 	if frameworkResolution.EffectiveProfile() == "nextjs" || fileExists("app") {
 		return guidedPreset{
 			ID:      "nextjs-app-router",
@@ -322,20 +351,324 @@ func detectGuidedPreset(project config.ProjectSettings, frameworkResolution fram
 	return guidedPreset{}
 }
 
-func applyPresetDefaults(candidates *[]miner.Candidate, adopted *[]config.Rule, preset guidedPreset) {
+func applyPresetDefaults(candidates []miner.Candidate, adopted []config.Rule, preset guidedPreset, project config.ProjectSettings, notes []string) ([]miner.Candidate, []config.Rule, []string) {
 	switch preset.ID {
+	case phpBrownfieldPresetID:
+		notes = appendUniqueStrings(notes,
+			"PHP-first starter config: JS/tooling areas were intentionally excluded from the first pass.",
+			"Guided mining was filtered for low-noise onboarding: trivial file patterns, package-style PHP namespace rules, and broad repo-wide cycles were omitted.",
+			"If the starter config feels too light, add rules manually after you validate the narrowed roots on real changes.",
+		)
+		return refinePHPBrownfieldGuidedCandidates(candidates, project), nil, notes
 	case "nextjs-app-router", "react-shared-packages", "layered-node-service":
-		for i := range *candidates {
-			if (*candidates)[i].Confidence != miner.ConfidenceHigh {
-				(*candidates)[i].Severity = config.SeverityWarning
+		for i := range candidates {
+			if candidates[i].Confidence != miner.ConfidenceHigh {
+				candidates[i].Severity = config.SeverityWarning
 			}
 		}
-		for i := range *adopted {
-			if (*adopted)[i].Severity == config.SeverityError {
-				(*adopted)[i].Severity = config.SeverityWarning
+		for i := range adopted {
+			if adopted[i].Severity == config.SeverityError {
+				adopted[i].Severity = config.SeverityWarning
 			}
 		}
 	}
+	return candidates, adopted, notes
+}
+
+func applyGuidedProjectDefaults(project *config.ProjectSettings, preset guidedPreset) []string {
+	if project == nil {
+		return nil
+	}
+	switch preset.ID {
+	case phpBrownfieldPresetID:
+		project.Language = "php"
+		project.Framework = "generic"
+		project.Include = []string{"**/*.php", "**/*.phtml"}
+		project.Exclude = mergeStringLists(project.Exclude, []string{
+			"**/vendor/**",
+			"**/runtime/**",
+			"**/node_modules/**",
+			"**/tests/**",
+			"**/docs/**",
+			"**/_assets/**",
+			"**/_build/**",
+			"**/_db/**",
+			"**/build/**",
+			"**/scripts/**",
+			"**/gulp/**",
+		})
+		project.Tsconfig = ""
+		project.Aliases = map[string][]string{}
+		if roots := discoverPHPBrownfieldRoots(); len(roots) > 0 {
+			project.Roots = roots
+		}
+		return []string{
+			"Recommended roots were narrowed to PHP application areas with supported files.",
+			"Generated rules prefer cross-area boundaries and local cycles over template naming or namespace/package noise.",
+		}
+	}
+	return nil
+}
+
+func looksLikePHPBrownfieldRepo() bool {
+	if fileExists("common") && fileExists("frontend") && fileExists("backend") {
+		return true
+	}
+	for _, versioned := range topLevelVersionedDirs() {
+		if fileExists(filepath.Join(versioned, "common")) && fileExists(filepath.Join(versioned, "frontend")) && fileExists(filepath.Join(versioned, "backend")) {
+			return true
+		}
+	}
+	return false
+}
+
+func discoverPHPBrownfieldRoots() []string {
+	preferred := []string{"common", "frontend", "backend", "api", "console"}
+	roots := make([]string, 0)
+	for _, name := range preferred {
+		if hasSupportedPHPFiles(name) {
+			roots = append(roots, name)
+		}
+	}
+	for _, versioned := range topLevelVersionedDirs() {
+		for _, name := range preferred {
+			candidate := filepath.Join(versioned, name)
+			if hasSupportedPHPFiles(candidate) {
+				roots = append(roots, filepath.ToSlash(candidate))
+			}
+		}
+	}
+	return dedupeSortedStrings(roots)
+}
+
+func topLevelVersionedDirs() []string {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := strings.TrimSpace(entry.Name())
+		if name == "" || strings.HasPrefix(name, ".") {
+			continue
+		}
+		if strings.HasPrefix(strings.ToLower(name), "v") && len(name) > 1 {
+			if _, err := strconv.Atoi(name[1:]); err == nil {
+				out = append(out, name)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func hasSupportedPHPFiles(root string) bool {
+	found := false
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil || found {
+			return nil
+		}
+		if d.IsDir() {
+			base := d.Name()
+			if base == "vendor" || base == "runtime" || base == "node_modules" || base == "tests" || base == "docs" || base == "_assets" || base == "_build" || base == "_db" || base == "build" || base == "scripts" || base == "gulp" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		lower := strings.ToLower(path)
+		if strings.HasSuffix(lower, ".php") || strings.HasSuffix(lower, ".phtml") {
+			found = true
+		}
+		return nil
+	})
+	return found
+}
+
+func mergeStringLists(existing, extra []string) []string {
+	return dedupeSortedStrings(append(append([]string{}, existing...), extra...))
+}
+
+func dedupeSortedStrings(values []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(filepath.ToSlash(value))
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func appendUniqueStrings(values []string, extras ...string) []string {
+	return mergeStringLists(values, extras)
+}
+
+func refinePHPBrownfieldGuidedCandidates(candidates []miner.Candidate, project config.ProjectSettings) []miner.Candidate {
+	allowedAreas := phpBrownfieldAllowedAreas(project.Roots)
+	if len(allowedAreas) == 0 {
+		return nil
+	}
+
+	collapsedImports := map[string]miner.Candidate{}
+	keptCycles := make([]miner.Candidate, 0)
+
+	for _, candidate := range candidates {
+		switch candidate.Kind {
+		case config.KindNoImport:
+			scopeArea := phpBrownfieldAreaRoot(scopeFromCandidate(candidate), allowedAreas)
+			targetArea := phpBrownfieldAreaRoot(targetFromCandidate(candidate), allowedAreas)
+			if scopeArea == "" || targetArea == "" || scopeArea == targetArea {
+				continue
+			}
+			collapsed := candidate
+			collapsed.Scope = []string{scopeArea + "/**"}
+			collapsed.Target = []string{targetArea + "/**"}
+			collapsed.Severity = config.SeverityWarning
+			collapsed.Evidence = fmt.Sprintf("%d/%d files in %s import %s", candidate.Violations, candidate.Support, scopeArea, targetArea)
+			key := scopeArea + "->" + targetArea
+			if existing, ok := collapsedImports[key]; !ok || preferPHPBrownfieldCandidate(collapsed, existing) {
+				collapsedImports[key] = collapsed
+			}
+		case config.KindNoCycle:
+			if candidate.Violations > 4 {
+				continue
+			}
+			scope := strings.TrimSuffix(scopeFromCandidate(candidate), "/**")
+			if pathDepth(scope) < 2 {
+				continue
+			}
+			keptCycles = append(keptCycles, withWarningSeverity(candidate))
+		}
+	}
+
+	imports := make([]miner.Candidate, 0, len(collapsedImports))
+	for _, candidate := range collapsedImports {
+		imports = append(imports, candidate)
+	}
+	sort.Slice(imports, func(i, j int) bool {
+		if imports[i].Violations != imports[j].Violations {
+			return imports[i].Violations > imports[j].Violations
+		}
+		if imports[i].Support != imports[j].Support {
+			return imports[i].Support > imports[j].Support
+		}
+		if imports[i].Scope[0] != imports[j].Scope[0] {
+			return imports[i].Scope[0] < imports[j].Scope[0]
+		}
+		return imports[i].Target[0] < imports[j].Target[0]
+	})
+	sort.Slice(keptCycles, func(i, j int) bool {
+		if keptCycles[i].Violations != keptCycles[j].Violations {
+			return keptCycles[i].Violations < keptCycles[j].Violations
+		}
+		if keptCycles[i].Support != keptCycles[j].Support {
+			return keptCycles[i].Support > keptCycles[j].Support
+		}
+		return scopeFromCandidate(keptCycles[i]) < scopeFromCandidate(keptCycles[j])
+	})
+
+	out := make([]miner.Candidate, 0, len(imports)+len(keptCycles))
+	for _, candidate := range imports {
+		out = append(out, candidate)
+		if len(out) >= 12 {
+			return out[:12]
+		}
+	}
+	for _, candidate := range keptCycles {
+		out = append(out, candidate)
+		if len(out) >= 12 {
+			return out[:12]
+		}
+	}
+	return out
+}
+
+func phpBrownfieldAllowedAreas(roots []string) []string {
+	out := make([]string, 0, len(roots))
+	for _, root := range roots {
+		root = strings.TrimSpace(filepath.ToSlash(root))
+		root = strings.Trim(root, "/")
+		if root == "" || root == "." {
+			continue
+		}
+		out = append(out, root)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return len(out[i]) > len(out[j])
+	})
+	return dedupePreserveOrder(out)
+}
+
+func phpBrownfieldAreaRoot(pathValue string, allowedAreas []string) string {
+	pathValue = strings.TrimSpace(filepath.ToSlash(pathValue))
+	pathValue = strings.TrimSuffix(pathValue, "/**")
+	pathValue = strings.Trim(pathValue, "/")
+	for _, area := range allowedAreas {
+		if pathValue == area || strings.HasPrefix(pathValue, area+"/") {
+			return area
+		}
+	}
+	return ""
+}
+
+func scopeFromCandidate(candidate miner.Candidate) string {
+	if len(candidate.Scope) == 0 {
+		return ""
+	}
+	return candidate.Scope[0]
+}
+
+func targetFromCandidate(candidate miner.Candidate) string {
+	if len(candidate.Target) == 0 {
+		return ""
+	}
+	return candidate.Target[0]
+}
+
+func preferPHPBrownfieldCandidate(left, right miner.Candidate) bool {
+	if left.Violations != right.Violations {
+		return left.Violations > right.Violations
+	}
+	if left.Support != right.Support {
+		return left.Support > right.Support
+	}
+	return left.Prevalence < right.Prevalence
+}
+
+func withWarningSeverity(candidate miner.Candidate) miner.Candidate {
+	candidate.Severity = config.SeverityWarning
+	return candidate
+}
+
+func pathDepth(pathValue string) int {
+	pathValue = strings.Trim(strings.TrimSpace(pathValue), "/")
+	if pathValue == "" || pathValue == "." {
+		return 0
+	}
+	return strings.Count(pathValue, "/") + 1
+}
+
+func dedupePreserveOrder(values []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 func fileExists(path string) bool {

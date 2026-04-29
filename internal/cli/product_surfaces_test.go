@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -135,6 +136,111 @@ export const page = Button
 	}
 }
 
+func TestInitGuidedPHPBrownfieldPresetNarrowsRoots(t *testing.T) {
+	code, out, errOut := runCmdInDir(t, fixturePath("php_brownfield_yii"), []string{
+		"init", "--guided", "--config", "generated.yaml",
+	})
+	if code != 0 {
+		t.Fatalf("expected guided init exit 0, got %d stderr=%s output=%s", code, errOut, out)
+	}
+	if !strings.Contains(out, "Preset: PHP Brownfield (Yii-style Monolith)") {
+		t.Fatalf("expected php preset recommendation, got: %s", out)
+	}
+	if !strings.Contains(out, "Recommended language: php") {
+		t.Fatalf("expected php language recommendation, got: %s", out)
+	}
+	for _, root := range []string{"api", "backend", "common", "frontend", "v2/common", "v2/frontend"} {
+		if !strings.Contains(out, root) {
+			t.Fatalf("expected recommended root %s in output, got: %s", root, out)
+		}
+	}
+	if strings.Contains(out, "Recommended roots: [.]") {
+		t.Fatalf("expected narrowed roots instead of '.', got: %s", out)
+	}
+	if !strings.Contains(out, "PHP-first starter config") {
+		t.Fatalf("expected php onboarding note, got: %s", out)
+	}
+}
+
+func TestInitGuidedPHPBrownfieldWritesReviewableConfig(t *testing.T) {
+	dir := t.TempDir()
+	copyFixtureDir(t, fixturePath("php_brownfield_yii"), dir)
+
+	code, out, errOut := runCmdInDir(t, dir, []string{
+		"init", "--guided",
+		"--config", "generated.yaml",
+		"--out", "generated.yaml",
+		"--write-config",
+		"--write-baseline",
+		"--baseline-out", "generated-baseline.json",
+	})
+	if code != 0 {
+		t.Fatalf("expected guided init exit 0, got %d stderr=%s output=%s", code, errOut, out)
+	}
+
+	cfg, err := config.Load(filepath.Join(dir, "generated.yaml"))
+	if err != nil {
+		t.Fatalf("expected generated config to load: %v", err)
+	}
+	if cfg.Project.Language != "php" {
+		t.Fatalf("expected php language, got %+v", cfg.Project)
+	}
+	if len(cfg.Project.Roots) == 0 || (len(cfg.Project.Roots) == 1 && cfg.Project.Roots[0] == ".") {
+		t.Fatalf("expected narrowed roots, got %+v", cfg.Project.Roots)
+	}
+	if !containsExact(cfg.Project.Include, "**/*.php") || !containsExact(cfg.Project.Include, "**/*.phtml") {
+		t.Fatalf("expected php include patterns, got %+v", cfg.Project.Include)
+	}
+	for _, excluded := range []string{"**/docs/**", "**/_assets/**", "**/vendor/**"} {
+		if !containsExact(cfg.Project.Exclude, excluded) {
+			t.Fatalf("expected exclude %s, got %+v", excluded, cfg.Project.Exclude)
+		}
+	}
+	if len(cfg.Rules) == 0 || len(cfg.Rules) > 12 {
+		t.Fatalf("expected a small reviewable rule set, got %d rules", len(cfg.Rules))
+	}
+	hasNoImport := false
+	hasNoCycle := false
+	for _, rule := range cfg.Rules {
+		if rule.Kind == "file_pattern" || rule.Kind == "no_package" {
+			t.Fatalf("expected low-noise php config, got rule %+v", rule)
+		}
+		if rule.Kind == "no_import" {
+			hasNoImport = true
+		}
+		if rule.Kind == "no_cycle" {
+			hasNoCycle = true
+			if rule.Scope[0] == "backend/models/**" || strings.Contains(rule.Message, "5 subtrees") {
+				t.Fatalf("expected giant broad cycle to be filtered out, got %+v", rule)
+			}
+		}
+	}
+	if !hasNoImport {
+		t.Fatalf("expected at least one high-signal no_import rule, got %+v", cfg.Rules)
+	}
+	if !hasNoCycle {
+		t.Fatalf("expected at least one localized no_cycle rule, got %+v", cfg.Rules)
+	}
+
+	entries, err := baseline.Load(filepath.Join(dir, "generated-baseline.json"))
+	if err != nil {
+		t.Fatalf("expected baseline to load: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("expected generated baseline entries")
+	}
+
+	code, out, errOut = runCmdInDir(t, dir, []string{
+		"check",
+		"--config", "generated.yaml",
+		"--baseline", "generated-baseline.json",
+		"--format", "json",
+	})
+	if code != 0 {
+		t.Fatalf("expected baseline-suppressed check exit 0, got %d stderr=%s output=%s", code, errOut, out)
+	}
+}
+
 func TestActionRunScriptCapturesExitCodeAndSarif(t *testing.T) {
 	dir := t.TempDir()
 	fakeBinary := filepath.Join(dir, "archguard")
@@ -223,4 +329,37 @@ func parseGithubOutputValue(t *testing.T, output, key string) string {
 	}
 	t.Fatalf("missing %s in output %q", key, output)
 	return ""
+}
+
+func copyFixtureDir(t *testing.T, src, dst string) {
+	t.Helper()
+	if err := filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, 0o644)
+	}); err != nil {
+		t.Fatalf("failed to copy fixture: %v", err)
+	}
+}
+
+func containsExact(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
